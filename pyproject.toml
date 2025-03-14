@@ -17,7 +17,7 @@ classifiers = [
 keywords = [
     'tasks'
     'python'
-    'async'
+    'async',
     'shell',
     'executor',
 ]
