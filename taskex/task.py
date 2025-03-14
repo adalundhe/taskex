@@ -306,6 +306,7 @@ class Task(Generic[T]):
             self._schedule_running_statuses[run_id] = True
             run = Run(
                 run_id,
+                self.name,
                 self.call,
                 TaskType.SHELL,
                 self._executor,
@@ -338,6 +339,7 @@ class Task(Generic[T]):
                 await asyncio.sleep(self.schedule)
                 run = Run(
                     self._snowflake_generator.generate(),
+                    self.name,
                     self.call,
                     self._executor,
                     self._executor_semaphore,
@@ -358,6 +360,7 @@ class Task(Generic[T]):
                 await asyncio.sleep(self.schedule)
                 run = Run(
                     self._snowflake_generator.generate(),
+                    self.name,
                     self.call,
                     self._executor,
                     self._executor_semaphore,
@@ -391,6 +394,7 @@ class Task(Generic[T]):
                 await asyncio.sleep(self.schedule)
                 run = Run(
                     self._snowflake_generator.generate(),
+                    self.name,
                     self.call,
                     self._executor,
                     self._executor_semaphore,
@@ -416,6 +420,7 @@ class Task(Generic[T]):
                 await asyncio.sleep(self.schedule)
                 run = Run(
                     self._snowflake_generator.generate(),
+                    self.name,
                     self.call,
                     self._executor,
                     self._executor_semaphore,
