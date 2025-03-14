@@ -1,14 +1,16 @@
 [project]
 name = "taskex"
-version = "0.0.1"
-description = "A pure Python library for running tasks asynchronously"
+version = "0.1.0"
+description = "A minimal dependency, pure Python library for running tasks asynchronously"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
     {name = "Ada Lundhe", email = "adalundhe@lundhe.audio"}
 ]
 license = { file = "LICENSE" }
-
+dependencies = [
+    'pydantic'
+]
 
 [build-system]
 requires = ["setuptools>=61.0"]
