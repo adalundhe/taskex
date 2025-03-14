@@ -1,0 +1,19 @@
+[project]
+name = "taskex"
+version = "0.0.1"
+description = "A pure Python library for running tasks asynchronously"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    {name = "Ada Lundhe", email = "adalundhe@lundhe.audio"}
+]
+license = { file = "LICENSE" }
+
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
