@@ -1,11 +1,25 @@
 [project]
 name = "taskex"
-version = "0.1.0"
+version = "0.1.1"
 description = "A minimal dependency, pure Python library for running tasks asynchronously"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
     {name = "Ada Lundhe", email = "adalundhe@lundhe.audio"}
+]
+classifiers = [
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
+]
+keywords = [
+    'tasks'
+    'python'
+    'async'
+    'shell',
+    'executor',
 ]
 license = { file = "LICENSE" }
 dependencies = [
