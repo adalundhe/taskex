@@ -15,7 +15,7 @@ classifiers = [
         "Operating System :: OS Independent",
 ]
 keywords = [
-    'tasks'
+    'tasks',
     'python',
     'async',
     'shell',
