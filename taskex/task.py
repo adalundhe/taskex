@@ -200,6 +200,7 @@ class Task(Generic[T]):
 
         run = Run(
             run_id,
+            self.name,
             self.call,
             TaskType.SHELL,
             self._executor,
@@ -234,6 +235,7 @@ class Task(Generic[T]):
 
         run = Run(
             run_id,
+            self.name,
             self.call,
             TaskType.CALLABLE,
             self._executor,
@@ -268,6 +270,7 @@ class Task(Generic[T]):
             self._schedule_running_statuses[run_id] = True
             run = Run(
                 run_id,
+                self.name,
                 self.call,
                 TaskType.CALLABLE,
                 self._executor,

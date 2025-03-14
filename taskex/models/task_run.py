@@ -13,6 +13,7 @@ from .task_type import TaskType
 
 class TaskRun(BaseModel):
     run_id: StrictInt
+    task_name: StrictStr
     status: RunStatus
     error: Optional[StrictStr] = None
     trace: Optional[StrictStr] = None

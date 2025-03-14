@@ -16,6 +16,7 @@ CommandType = Literal['shell', 'subprocess']
 
 class ShellProcess(BaseModel):
     run_id: StrictInt
+    task_name: StrictStr
     process_id: StrictInt
     command: StrictStr
     status: RunStatus

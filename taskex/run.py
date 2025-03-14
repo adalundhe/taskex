@@ -47,6 +47,7 @@ class Run:
     def __init__(
         self,
         run_id: int,
+        task_name: str,
         call: Callable[..., Awaitable[Any]] | str,
         task_type: TaskType,
         executor: ProcessPoolExecutor | ThreadPoolExecutor,
@@ -54,6 +55,7 @@ class Run:
         timeout: Optional[int] = None,
     ) -> None:
         self.run_id = run_id
+        self.task_name = task_name
         self.status = RunStatus.CREATED
 
         self._args: tuple[Any, ...] | None = None
@@ -201,6 +203,7 @@ class Run:
 
             return ShellProcess(
                     run_id=self.run_id,
+                    task_name=self.task_name,
                     process_id=self._process.pid,
                     command=self.call,
                     args=self._args,
@@ -218,6 +221,7 @@ class Run:
 
         return TaskRun(
             run_id=self.run_id,
+            task_name=self.task_name,
             status=self.status,
             error=self.error,
             trace=self.trace,
@@ -358,6 +362,7 @@ class Run:
 
             update = ShellProcess(
                 run_id=self.run_id,
+                task_name=self.task_name,
                 process_id=self._process.pid,
                 command=self.call,
                 args=self._args,
