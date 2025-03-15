@@ -114,6 +114,18 @@ class Task(Generic[T]):
         if run := self._runs.get(run_id):
             await run.cancel()
 
+    async def cancel_schedule(self, run_id: str):
+        if run := self._runs.get(run_id) and self._schedules.get(run_id):
+            self._schedule_running_statuses[run_id] = False
+
+            try:
+                self._schedules[run_id].set_result(None)
+
+            except Exception:
+                pass
+
+            await run.cancel()
+
     async def shutdown(self):
         for run in self._runs.values():
             await run.cancel()

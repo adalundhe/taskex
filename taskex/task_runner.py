@@ -200,24 +200,26 @@ class TaskRunner:
                 timeout=timeout,
             )
         
-    async def wait(
-        self,
-        command_name: str,
-        run_id: int,
-    ) -> ShellProcess | TaskRun:
-        update = await self.get_task_update(command_name, run_id)
+    async def wait(self, token: str) -> ShellProcess | TaskRun:
+        
+        task_name, run_id_str = token.split(':', maxsplit=1)
+        run_id = int(run_id_str)
+        
+        update = await self.tasks[task_name].get_run_update(token)
         while update.status not in [RunStatus.COMPLETE, RunStatus.FAILED, RunStatus.CANCELLED]:
             await asyncio.sleep(self._cleanup_interval)
-            update = await self.get_task_update(command_name, run_id)
+            update = await self.tasks[task_name].get_run_update(token)
 
-        return await self.tasks[command_name].complete(run_id)
+        return await self.tasks[task_name].complete(run_id)
         
     async def get_task_update(
         self,
-        command_name: str,
-        run_id: int,
+        token: str
     ):
-        return await self.tasks[command_name].get_run_update(run_id)
+        task_name, run_id = token.split(':', maxsplit=1)
+        return await self.tasks[task_name].get_run_update(
+            int(run_id),
+        )
     
 
     def stop(
@@ -232,26 +234,42 @@ class TaskRunner:
         if task := self.tasks.get(task_name):
             return task.status
 
-    def get_run_status(self, task_name: str, run_id: str):
-        if task := self.tasks.get(task_name):
-            return task.get_run_status(run_id)
+    def get_run_status(self, token: str):
+        task_name, run_id = token.split(':', maxsplit=1)
 
-    async def complete(self, task_name: str, run_id: str):
         if task := self.tasks.get(task_name):
-            return await task.complete(run_id)
+            return task.get_run_status(
+                int(run_id)
+            )
 
-    async def cancel(self, task_name: str, run_id: str):
+    async def complete(self, token: str):
+        task_name, run_id = token.split(':', maxsplit=1)
+
+        if task := self.tasks.get(task_name):
+            return await task.complete(
+                int(run_id)
+            )
+
+    async def cancel(self, token: str):
+        task_name, run_id = token.split(':', maxsplit=1)
+
         task = self.tasks.get(task_name)
         if task:
-            await task.cancel(run_id)
+            await task.cancel(
+                int(run_id)
+            )
 
     async def cancel_schedule(
         self,
-        task_name: str,
+        token: str,
     ):
+        task_name, run_id = token.split(':', maxsplit=1)
+
         task = self.tasks.get(task_name)
         if task:
-            await task.cancel_schedule()
+            await task.cancel_schedule(
+                int(run_id)
+            )
 
     async def shutdown(self):
         for task in self.tasks.values():
