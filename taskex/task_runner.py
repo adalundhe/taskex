@@ -32,7 +32,18 @@ def shutdown_executor(
 
 
 class TaskRunner:
-    def __init__(self, instance_id: int, config: Env) -> None:
+    def __init__(
+        self,
+        instance_id: int | None = None, 
+        config: Env | None = None,
+    ) -> None:
+        
+        if instance_id is None:
+            instance_id = 0
+
+        if config is None:
+            config = Env()
+
         self.tasks: Dict[str, Task[Any]] = {}
         self.results: Dict[str, Any]
         self._cleanup_interval = TimeParser(config.MERCURY_SYNC_CLEANUP_INTERVAL).time
