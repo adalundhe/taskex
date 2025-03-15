@@ -93,12 +93,12 @@ async def get_command_output(
     return 'Command is still running.'
 
 @mcp.tool()
-async def build_image(
+async def create_image(
     ctx: Context,
     name: str,
     tag: str | None = None
 ):
-    """Run a common linux shell command as you would in your terminal.
+    """Create a new Docker image
 
     Args:
         ctx: MCP context for providing progress updates
@@ -106,27 +106,103 @@ async def build_image(
         tag: An optional image tag.
 
     Returns:
-        str: The image's full name specified as <name>:<tag>.
+        str: The image_name specified as <name>:<tag> to be used in tracking.
 
     Examples:
-        "List all current files in my home directory"
-        "Grep the file test.txt for any numbers"
-        "Find all files matching the name script.py"
-        "Build the docker image at image/Dockerfile and tag it as "
+        "Create an image"
+        "Build a new image"
+        "Create a Dockerfile"
+        "Build a Dockerfile"
     
     """
 
-    image_full_name = f'{name}:{tag}'
+    image_name = f'{name}:{tag}'
 
     if tag:
-        images[image_full_name] = Image(
+        images[image_name] = Image(
             name,
             tag=tag
         )
 
     else:
-        images[image_full_name] = Image(name)
+        images[image_name] = Image(name)
 
-    return image_full_name
+    return image_name
 
+@mcp.tool()
+async def add_env_layer(
+    ctx: Context,
+    image_name: str,
+    env_values: dict[str, str],
+):
+    """Add an ENV layer to the Docker image
+
+    Args:
+        ctx: MCP context for providing progress updates
+        image_name: The image_name specified as <name>:<tag> to be used in tracking.
+        env_values: A dict of KEY/VALUE pairs of env values. The user should specify these as "a KEY equal to VALUE" or "KEY=VALUE"
+
+    Returns:
+        str: The image_name specified as <name>:<tag> to be used in tracking.
+
+    Examples:
+        "with envars TEST equal to foo, BEEP equal to 2, and BOP equal to $ARG_NAME"
+        "add env vars VERSION=3.13, PYTHONVUFFER=1, MANAGER=uv, MODE=ci"
+        "set environmental variables JAVA_VERSION to coretto-1.8, JDK=8, and BUILD_BASE to spark"
+    """
     
+    image = images.get(image_name)
+
+    if image is None:
+        return 'Err. - no image found'
+    
+    envars = env_values.items()
+    keys = [key for key, _ in envars]
+    values = [var for var, _ in envars]
+    
+    image.env(
+        keys=keys,
+        values=values,
+    )
+
+    return image_name
+
+@mcp.tool()
+async def add_from_layer(
+    ctx: Context,
+    image_name: str,
+    base: str,
+    tag: str,
+    alias: str | None = None,
+    platform: str | None = None,
+):
+    """Add an ENV layer to the Docker image
+
+    Args:
+        ctx: MCP context for providing progress updates
+        image_name: The image_name specified as <name>:<tag> to be used in tracking.
+        base: The base name of the source image to use in the FROM directive for this Docker image
+        tag: The tag of the source image to use in the FROM directive for this Docker image
+        alias: An optional alias to use for the 
+
+    Returns:
+        str: The image_name specified as <name>:<tag> to be used in tracking.
+
+    Examples:
+        "with envars TEST equal to foo, BEEP equal to 2, and BOP equal to $ARG_NAME"
+        "add env vars VERSION=3.13, PYTHONVUFFER=1, MANAGER=uv, MODE=ci"
+        "set environmental variables JAVA_VERSION to coretto-1.8, JDK=8, and BUILD_BASE to spark"
+    """
+
+    image = images.get(image_name)
+
+    if image is None:
+        return 'Err. - no image found'
+    
+    image.stage(
+        base,
+        tag,
+        alias=alias,
+        platform=platform,
+    )
+
