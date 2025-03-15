@@ -2,6 +2,7 @@ import asyncio
 import functools
 import inspect
 import pathlib
+import json
 import time
 import traceback
 from asyncio.subprocess import Process
@@ -92,6 +93,15 @@ class Run:
         self._loop = asyncio.get_event_loop()
         self._executor = executor
         self._semaphore = semaphore
+
+    def to_dict(self):
+        return {
+            'run_id': self.run_id,
+            'task_name': self.task_name
+        }
+    
+    def to_serialized_dict(self):
+        return json.dumps(self.to_dict())
 
     @property
     def running(self):
