@@ -10,7 +10,7 @@ async def run():
         shell=True,
     )
 
-    output: ShellProcess = await runner.wait('get_files', run.run_id)
+    output: ShellProcess = await runner.wait(run.task_name, run.run_id)
 
     print(output.result)
 

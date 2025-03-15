@@ -14,7 +14,7 @@ from typing import (
 )
 
 from .env import Env
-from .models import RunStatus, TaskType
+from .models import RunStatus, TaskType, ShellProcess, TaskRun
 from .snowflake import SnowflakeGenerator
 from .util.time_parser import TimeParser
 
@@ -204,7 +204,7 @@ class TaskRunner:
         self,
         command_name: str,
         run_id: int,
-    ):
+    ) -> ShellProcess | TaskRun:
         update = await self.get_task_update(command_name, run_id)
         while update.status not in [RunStatus.COMPLETE, RunStatus.FAILED, RunStatus.CANCELLED]:
             await asyncio.sleep(self._cleanup_interval)

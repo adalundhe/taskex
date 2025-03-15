@@ -29,7 +29,7 @@ async def run():
         async_task,
     )
 
-    await runner.wait('async_task', run.run_id)
+    await runner.wait(run.task_name, run.run_id)
 
     await runner.shutdown()
 

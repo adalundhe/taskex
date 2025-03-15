@@ -25,7 +25,7 @@ async def run():
         run_process,
     )
 
-    await runner.wait('run_process', run.run_id)
+    await runner.wait(run.task_name, run.run_id)
 
     await runner.shutdown()
 
