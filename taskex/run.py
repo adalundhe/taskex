@@ -43,6 +43,7 @@ class Run:
         "_loop",
         "_executor",
         "_semaphore",
+        "task_name",
     )
 
     def __init__(
