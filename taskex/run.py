@@ -103,6 +103,10 @@ class Run:
     
     def to_serialized_dict(self):
         return json.dumps(self.to_dict())
+    
+    @property
+    def token(self):
+        return f'{self.task_name}:{self.run_id}'
 
     @property
     def running(self):
