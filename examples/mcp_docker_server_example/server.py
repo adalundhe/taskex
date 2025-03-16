@@ -101,39 +101,40 @@ async def get_command_output(
 
 
 @mcp.tool()
-async def run_dcrx_script(
+async def create_from_dcrx_image(
     ctx: Context,
     path: str,
-    image: str,
-    tag: str | None = None,
-    dockerfile: str | None = None,
+    overwrite: bool | None = None,
 ):
+    """Build the Docker image at the specified path.
+
+    Args:
+        ctx: MCP context for providing progress updates
+        path: The path to a Python script containing the DCRX image(s) to compile to Dockerfiles
+        overwrite: Optionally enable compilation to overwrite any existing paths for compiled images
+
+    Returns:
+        str: The tracking_token to be used in subsequent calls to get_command_output and task tracking or error. If an error is retuned, the command should abort.
+
+    Examples:
+        "create the images in example.py"
+        "compile the dcrx script test.py"
+        "create the Dockerfile from images.py"
+
+    """
+
     args = [
-        "build",
+        "compile",
         path,
-        image,
     ]
 
-    if tag:
-        args.extend(
-            [
-                "-t",
-                tag,
-            ]
-        )
-
-    if dockerfile:
-        args.extend(
-            [
-                "-d",
-                dockerfile,
-            ]
-        )
+    if overwrite:
+        args.append("-o")
 
     run = runner.command(
         "dcrx",
         *args,
-        alias="build_image",
+        alias="compile_image",
     )
 
     return run.token
