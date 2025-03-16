@@ -1,7 +1,8 @@
 import asyncio
-import sys
 import time
-from taskex import TaskRunner, Env
+
+from taskex import Env, TaskRunner
+
 
 async def async_task():
     loop = asyncio.get_event_loop()
@@ -22,6 +23,7 @@ async def async_task():
 
         elapsed = time.monotonic() - start
 
+
 async def run():
     runner = TaskRunner(0, Env())
 
@@ -29,10 +31,9 @@ async def run():
         async_task,
     )
 
-    await runner.wait(run.task_name, run.run_id)
+    await runner.wait(run.token)
 
     await runner.shutdown()
 
 
 asyncio.run(run())
-

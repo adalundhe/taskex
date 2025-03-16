@@ -219,7 +219,7 @@ class TaskRunner:
                 timeout=timeout,
             )
 
-    async def wait_all(self, tokens: tuple[str, ...]):
+    async def wait_all(self, tokens: list[str]):
         return await asyncio.gather(
             *[self.wait(token) for token in tokens],
         )

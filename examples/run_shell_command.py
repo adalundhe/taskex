@@ -1,16 +1,18 @@
 import asyncio
-from taskex import TaskRunner, Env, ShellProcess
+
+from taskex import Env, ShellProcess, TaskRunner
+
 
 async def run():
     runner = TaskRunner(0, Env())
 
     run = runner.command(
-        'ls',
-        alias='get_files',
+        "ls",
+        alias="get_files",
         shell=True,
     )
 
-    output: ShellProcess = await runner.wait(run.task_name, run.run_id)
+    output: ShellProcess = await runner.wait(run.token)
 
     print(output.result)
 
@@ -18,4 +20,3 @@ async def run():
 
 
 asyncio.run(run())
-

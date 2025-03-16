@@ -1,19 +1,19 @@
 import asyncio
 import functools
 import inspect
-import pathlib
 import json
+import pathlib
 import time
 import traceback
 from asyncio.subprocess import Process
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-from typing import Any, Awaitable, Callable, Optional, Dict
+from typing import Any, Awaitable, Callable, Dict, Optional
 
 from .models import (
-    RunStatus,
-    TaskRun,
-    ShellProcess,
     CommandType,
+    RunStatus,
+    ShellProcess,
+    TaskRun,
     TaskType,
 )
 
@@ -38,8 +38,8 @@ class Run:
         "_working_directory",
         "_command_type",
         "_buffer_size",
-        '_read_lock',
-        '_read_timeout',
+        "_read_lock",
+        "_read_timeout",
         "_loop",
         "_executor",
         "_semaphore",
@@ -64,14 +64,12 @@ class Run:
         self._env: dict[str, Any] | None = None
         self._working_directory: str | None = None
 
-
         self.error: Optional[str] = None
         self.trace: Optional[str] = None
         self.start = time.monotonic()
         self.end = 0
         self.elapsed = 0
         self.timeout = timeout
-
 
         self.call = call
         self.task_type = task_type
@@ -80,15 +78,15 @@ class Run:
         self._env: dict[str, Any] | None = None
         self._working_directory: str | None = None
         self._read_lock = asyncio.Lock()
-        
-        if not isinstance(self.call, str) and hasattr(call, '__self__'):
+
+        if not isinstance(self.call, str) and hasattr(call, "__self__"):
             bound_instance = call.__self__
             self.call = self.call.__get__(bound_instance, self.call.__class__)
             setattr(bound_instance, self.call.__name__, self.call)
 
         self._task: Optional[asyncio.Task] = None
         self._process: Process | None = None
-        self._command_type: CommandType = 'subprocess'
+        self._command_type: CommandType = "subprocess"
         self._buffer_size = 8192
         self._read_timeout: int | float = 1
         self._loop = asyncio.get_event_loop()
@@ -96,17 +94,14 @@ class Run:
         self._semaphore = semaphore
 
     def to_dict(self):
-        return {
-            'run_id': self.run_id,
-            'task_name': self.task_name
-        }
-    
+        return {"run_id": self.run_id, "task_name": self.task_name}
+
     def to_serialized_dict(self):
         return json.dumps(self.to_dict())
-    
+
     @property
     def token(self):
-        return f'{self.task_name}:{self.run_id}'
+        return f"{self.task_name}:{self.run_id}"
 
     @property
     def running(self):
@@ -131,17 +126,17 @@ class Run:
     @property
     def created(self):
         return self.status == RunStatus.CREATED
-    
+
     @property
     def pid(self):
         if self._process:
             return self._process.pid
-        
+
     @property
     def return_code(self):
         if self._process:
             return self._process.returncode
-        
+
     async def get_stdout(self):
         buffer = bytearray()
 
@@ -168,18 +163,16 @@ class Run:
         return bytes(buffer).decode()
 
     async def _read_stderr_with_timeout(self):
-
         await self._read_lock.acquire()
-        
-        try:
 
+        try:
             chunk = await asyncio.wait_for(
                 self._process.stderr.read(self._buffer_size),
                 timeout=self._read_timeout,
             )
-        
+
         except asyncio.TimeoutError:
-            chunk = b''
+            chunk = b""
 
         if self._read_lock.locked():
             self._read_lock.release()
@@ -187,7 +180,6 @@ class Run:
         return chunk
 
     async def _read_stdout_with_timeout(self):
-
         await self._read_lock.acquire()
 
         try:
@@ -195,15 +187,15 @@ class Run:
                 self._process.stdout.read(self._buffer_size),
                 timeout=self._read_timeout,
             )
-        
+
         except asyncio.TimeoutError:
-            chunk = b''
-        
+            chunk = b""
+
         if self._read_lock.locked():
             self._read_lock.release()
 
         return chunk
-    
+
     @property
     def task_running(self):
         if self._process:
@@ -217,22 +209,21 @@ class Run:
             stdout = await self.get_stdout()
 
             return ShellProcess(
-                    run_id=self.run_id,
-                    task_name=self.task_name,
-                    process_id=self._process.pid,
-                    command=self.call,
-                    args=self._args,
-                    status=self.status,
-                    return_code=self._process.returncode,
-                    env=self._env,
-                    working_directory=self._working_directory,
-                    command_type=self._command_type,
-                    error=stderr,
-                    result=stdout,
-                    trace=self.trace,
-                    elapsed=time.monotonic() - self.start
-                )
-
+                run_id=self.run_id,
+                task_name=self.task_name,
+                process_id=self._process.pid,
+                command=self.call,
+                args=self._args,
+                status=self.status,
+                return_code=self._process.returncode,
+                env=self._env,
+                working_directory=self._working_directory,
+                command_type=self._command_type,
+                error=stderr,
+                result=stdout,
+                trace=self.trace,
+                elapsed=time.monotonic() - self.start,
+            )
 
         return TaskRun(
             run_id=self.run_id,
@@ -262,7 +253,6 @@ class Run:
 
     async def cancel(self):
         if self._process:
-            
             try:
                 self._process.terminate()
 
@@ -280,7 +270,7 @@ class Run:
     def abort(self):
         if self._process:
             self._process.kill()
-            
+
         try:
             self._task.set_result(None)
 
@@ -299,23 +289,25 @@ class Run:
         env: Dict[str, str] | None = None,
         cwd: str | pathlib.Path | None = None,
         shell: bool = False,
-        timeout: int | float | None = None
+        timeout: int | float | None = None,
     ):
         self._args = args
         self._env = env
-        
+
         if cwd:
             self._working_directory = str(cwd)
 
-        self._task = asyncio.ensure_future(self._execute_shell(
-            *args,
-            env=env,
-            cwd=cwd,
-            shell=shell,
-            timeout=timeout,
-            poll_interval=poll_interval,
-        ))
-        
+        self._task = asyncio.ensure_future(
+            self._execute_shell(
+                *args,
+                env=env,
+                cwd=cwd,
+                shell=shell,
+                timeout=timeout,
+                poll_interval=poll_interval,
+            )
+        )
+
     async def _execute_shell(
         self,
         *args: tuple[Any, ...],
@@ -326,20 +318,19 @@ class Run:
         timeout: int | float | None = None,
     ):
         if shell:
-            self._command_type = 'shell'
+            self._command_type = "shell"
 
         working_directory: pathlib.Path | None = None
         if cwd:
             working_directory = pathlib.Path(cwd)
 
         try:
-
             if shell:
                 command = [self.call]
                 command.extend(args)
 
                 self._process = await asyncio.create_subprocess_shell(
-                    ' '.join(command),
+                    " ".join(command),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     env=env,
@@ -353,17 +344,17 @@ class Run:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     env=env,
-                    cwd=working_directory if cwd else None
+                    cwd=working_directory if cwd else None,
                 )
 
         except Exception:
             pass
-        
+
         self.status = RunStatus.RUNNING
 
         try:
             if timeout:
-                update =await asyncio.wait_for(
+                update = await asyncio.wait_for(
                     self._poll_for_shell_complete(poll_interval),
                     timeout=timeout,
                 )
@@ -388,17 +379,16 @@ class Run:
                 command_type=self._command_type,
                 error=error,
                 trace=self.trace,
-                elapsed=self.start - time.monotonic()
-
+                elapsed=self.start - time.monotonic(),
             )
 
-        error_message = ''
+        error_message = ""
         try:
             error_message = update.error
 
         except Exception:
-            error_message = 'Unknown exception - failed to decode stderr output'
-        
+            error_message = "Unknown exception - failed to decode stderr output"
+
         self.error = error_message
 
         if self.return_code != 0:
@@ -413,19 +403,30 @@ class Run:
         except Exception:
             pass
 
-        return update
+        return ShellProcess(
+            run_id=self.run_id,
+            task_name=self.task_name,
+            process_id=self._process.pid,
+            command=self.call,
+            args=self._args,
+            status=self.status,
+            return_code=self._process.returncode,
+            env=self._env,
+            working_directory=self._working_directory,
+            command_type=self._command_type,
+            error=update.error,
+            result=update.result,
+            trace=self.trace,
+            elapsed=self.start - time.monotonic(),
+        )
 
-    async def _poll_for_shell_complete(
-        self,
-        poll_interval: int | float
-    ):
+    async def _poll_for_shell_complete(self, poll_interval: int | float):
         result = await self.get_run_update()
         while self._process.returncode is None:
             await asyncio.sleep(poll_interval)
             result = await self.get_run_update()
 
             self.elapsed = time.monotonic() - self.start
-            
 
         return result
 
@@ -438,9 +439,8 @@ class Run:
                 or inspect.isawaitable(self.call)
                 or inspect.iscoroutinefunction(self.call)
             )
-            
-            if self.timeout and is_coroutine:
 
+            if self.timeout and is_coroutine:
                 self.result = await asyncio.wait_for(
                     self.call(*args, **kwargs), timeout=self.timeout
                 )
@@ -452,12 +452,7 @@ class Run:
                 await self._semaphore.acquire()
                 self.result = await asyncio.wait_for(
                     self._loop.run_in_executor(
-                        self._executor,
-                        functools.partial(
-                            self.call,
-                            *args,
-                            **kwargs
-                        )
+                        self._executor, functools.partial(self.call, *args, **kwargs)
                     )
                 )
 
@@ -466,16 +461,11 @@ class Run:
             else:
                 await self._semaphore.acquire()
                 self.result = await self._loop.run_in_executor(
-                    self._executor,
-                    functools.partial(
-                        self.call,
-                        *args,
-                        **kwargs
-                    )
+                    self._executor, functools.partial(self.call, *args, **kwargs)
                 )
 
                 self._semaphore.release()
-                
+
             self.status = RunStatus.COMPLETE
 
         except asyncio.TimeoutError:
@@ -490,4 +480,14 @@ class Run:
         self.end = time.monotonic()
         self.elapsed = self.end - self.start
 
-        return self.result
+        return TaskRun(
+            run_id=self.run_id,
+            task_name=self.task_name,
+            status=self.status,
+            error=self.error,
+            trace=self.trace,
+            start=self.start,
+            end=self.end,
+            elapsed=time.monotonic() - self.start,
+            result=self.result,
+        )

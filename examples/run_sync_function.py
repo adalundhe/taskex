@@ -1,9 +1,11 @@
 import asyncio
-from taskex import TaskRunner, Env
+
+from taskex import Env, TaskRunner
+
 
 def run_process():
     import time
-    
+
     start = time.monotonic()
     elapsed = 0
     idx = 0
@@ -12,11 +14,11 @@ def run_process():
         time.sleep(1)
         idx += 1
 
-        with open('test.txt', 'a') as file:
-            file.write(str(idx) + '\n')
-        
+        with open("test.txt", "a") as file:
+            file.write(str(idx) + "\n")
 
         elapsed = time.monotonic() - start
+
 
 async def run():
     runner = TaskRunner(0, Env())
@@ -25,10 +27,9 @@ async def run():
         run_process,
     )
 
-    await runner.wait(run.task_name, run.run_id)
+    await runner.wait(run.token)
 
     await runner.shutdown()
 
 
 asyncio.run(run())
-
