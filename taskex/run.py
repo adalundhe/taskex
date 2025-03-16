@@ -382,6 +382,27 @@ class Run:
                 elapsed=self.start - time.monotonic(),
             )
 
+        except Exception as err:
+            error = f"Err. - Task Run - {self.run_id} - encountered error {str(err)}."
+            self.trace = traceback.format_exc()
+            self.status = RunStatus.FAILED
+
+            update = ShellProcess(
+                run_id=self.run_id,
+                task_name=self.task_name,
+                process_id=self._process.pid,
+                command=self.call,
+                args=self._args,
+                status=self.status,
+                return_code=self._process.returncode,
+                env=self._env,
+                working_directory=self._working_directory,
+                command_type=self._command_type,
+                error=error,
+                trace=self.trace,
+                elapsed=self.start - time.monotonic(),
+            )
+
         error_message = ""
         try:
             error_message = update.error
