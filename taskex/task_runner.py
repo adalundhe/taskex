@@ -228,7 +228,7 @@ class TaskRunner:
         task_name, run_id_str = token.split(":", maxsplit=1)
         run_id = int(run_id_str)
 
-        update = await self.tasks[task_name].get_run_update(token)
+        update = await self.tasks[task_name].get_run_update(run_id)
         while update.status not in [
             RunStatus.COMPLETE,
             RunStatus.FAILED,

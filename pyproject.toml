@@ -1,6 +1,6 @@
 [project]
 name = "taskex"
-version = "0.1.12"
+version = "0.1.13"
 description = "A minimal dependency, pure Python library for running tasks asynchronously"
 readme = "README.md"
 requires-python = ">=3.11"
