@@ -406,11 +406,11 @@ class Run:
         return ShellProcess(
             run_id=self.run_id,
             task_name=self.task_name,
-            process_id=self._process.pid,
+            process_id=update.process_id,
             command=self.call,
             args=self._args,
             status=self.status,
-            return_code=self._process.returncode,
+            return_code=update.return_code,
             env=self._env,
             working_directory=self._working_directory,
             command_type=self._command_type,
