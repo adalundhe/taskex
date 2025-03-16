@@ -1,31 +1,30 @@
 import asyncio
-import signal
 import shlex
+import signal
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-
 from typing import (
     Any,
+    Awaitable,
+    Callable,
     Dict,
+    Literal,
     Optional,
     TypeVar,
-    Literal,
-    Callable,
-    Awaitable,
 )
 
 from .env import Env
-from .models import RunStatus, TaskType, ShellProcess, TaskRun
+from .models import RunStatus, ShellProcess, TaskRun, TaskType
 from .snowflake import SnowflakeGenerator
-from .util.time_parser import TimeParser
-
 from .task import Task
+from .util.time_parser import TimeParser
 
 T = TypeVar("T")
 
+
 def shutdown_executor(
     sig: int,
-    executor: ThreadPoolExecutor | ProcessPoolExecutor, 
-    default_handler: Callable[..., Any]
+    executor: ThreadPoolExecutor | ProcessPoolExecutor,
+    default_handler: Callable[..., Any],
 ):
     executor.shutdown(cancel_futures=True)
     signal.signal(sig, default_handler)
@@ -34,10 +33,9 @@ def shutdown_executor(
 class TaskRunner:
     def __init__(
         self,
-        instance_id: int | None = None, 
+        instance_id: int | None = None,
         config: Env | None = None,
     ) -> None:
-        
         if instance_id is None:
             instance_id = 0
 
@@ -51,27 +49,31 @@ class TaskRunner:
         self._run_cleanup: bool = False
         self._snowflake_generator = SnowflakeGenerator(instance_id)
 
-        if config.MERCURY_SYNC_EXECUTOR_TYPE == 'thread':
-            self._executor = ThreadPoolExecutor(max_workers=config.MERCURY_SYNC_TASK_RUNNER_MAX_THREADS)
+        if config.MERCURY_SYNC_EXECUTOR_TYPE == "thread":
+            self._executor = ThreadPoolExecutor(
+                max_workers=config.MERCURY_SYNC_TASK_RUNNER_MAX_THREADS
+            )
 
         else:
+            self._executor = ProcessPoolExecutor(
+                max_workers=config.MERCURY_SYNC_TASK_RUNNER_MAX_THREADS
+            )
 
-            self._executor = ProcessPoolExecutor(max_workers=config.MERCURY_SYNC_TASK_RUNNER_MAX_THREADS)
-
-        self._executor_sempahore = asyncio.Semaphore(value=config.MERCURY_SYNC_TASK_RUNNER_MAX_THREADS)
+        self._executor_sempahore = asyncio.Semaphore(
+            value=config.MERCURY_SYNC_TASK_RUNNER_MAX_THREADS
+        )
         self._loop = asyncio.get_event_loop()
 
         for sig in [signal.SIGINT, signal.SIGTERM, signal.SIG_IGN]:
-
             default_handler = signal.getsignal(sig)
 
             self._loop.add_signal_handler(
                 sig,
                 lambda: shutdown_executor(
                     sig,
-                    self._executor, 
+                    self._executor,
                     default_handler,
-                )
+                ),
             )
 
     def all_tasks(self):
@@ -89,21 +91,27 @@ class TaskRunner:
         self,
         call: Callable[..., Awaitable[Any]],
         *args,
+        alias: str | None = None,
         run_id: int | None = None,
-        timeout: int | float | None = None,
+        timeout: str | int | float | None = None,
         schedule: str | None = None,
-        trigger: Literal["MANUAL", "ON_START"] = 'MANUAL',
-        repeat: Literal["NEVER", "ALWAYS"] | int = 'NEVER',
+        trigger: Literal["MANUAL", "ON_START"] = "MANUAL",
+        repeat: Literal["NEVER", "ALWAYS"] | int = "NEVER",
         keep: int | None = None,
         max_age: str | None = None,
-        keep_policy: Literal["COUNT", "AGE", "COUNT_AND_AGE"] = 'COUNT',
+        keep_policy: Literal["COUNT", "AGE", "COUNT_AND_AGE"] = "COUNT",
         **kwargs,
     ):
-        
+        if isinstance(timeout, str):
+            timeout = TimeParser(timeout).time
+
         if self._cleanup_task is None:
             self.start_cleanup()
 
-        command_name = call.__name__
+        command_name = alias
+        if command_name is None:
+            command_name = call.__name__
+
         task = self.tasks.get(command_name)
         if task is None and call:
             task = Task(
@@ -140,7 +148,7 @@ class TaskRunner:
                 run_id=run_id,
                 timeout=timeout,
             )
-        
+
     def command(
         self,
         command: str,
@@ -152,11 +160,11 @@ class TaskRunner:
         run_id: int | None = None,
         timeout: str | int | float | None = None,
         schedule: str | None = None,
-        trigger: Literal["MANUAL", "ON_START"] = 'MANUAL',
-        repeat: Literal["NEVER", "ALWAYS"] | int = 'NEVER',
+        trigger: Literal["MANUAL", "ON_START"] = "MANUAL",
+        repeat: Literal["NEVER", "ALWAYS"] | int = "NEVER",
         keep: int | None = None,
         max_age: str | None = None,
-        keep_policy: Literal["COUNT", "AGE", "COUNT_AND_AGE"] = 'COUNT',
+        keep_policy: Literal["COUNT", "AGE", "COUNT_AND_AGE"] = "COUNT",
     ):
         if self._cleanup_task is None:
             self.start_cleanup()
@@ -210,28 +218,32 @@ class TaskRunner:
                 run_id=run_id,
                 timeout=timeout,
             )
-        
+
+    async def wait_all(self, tokens: tuple[str, ...]):
+        return await asyncio.gather(
+            *[self.wait(token) for token in tokens],
+        )
+
     async def wait(self, token: str) -> ShellProcess | TaskRun:
-        
-        task_name, run_id_str = token.split(':', maxsplit=1)
+        task_name, run_id_str = token.split(":", maxsplit=1)
         run_id = int(run_id_str)
-        
+
         update = await self.tasks[task_name].get_run_update(token)
-        while update.status not in [RunStatus.COMPLETE, RunStatus.FAILED, RunStatus.CANCELLED]:
+        while update.status not in [
+            RunStatus.COMPLETE,
+            RunStatus.FAILED,
+            RunStatus.CANCELLED,
+        ]:
             await asyncio.sleep(self._cleanup_interval)
             update = await self.tasks[task_name].get_run_update(token)
 
         return await self.tasks[task_name].complete(run_id)
-        
-    async def get_task_update(
-        self,
-        token: str
-    ):
-        task_name, run_id = token.split(':', maxsplit=1)
+
+    async def get_task_update(self, token: str):
+        task_name, run_id = token.split(":", maxsplit=1)
         return await self.tasks[task_name].get_run_update(
             int(run_id),
         )
-    
 
     def stop(
         self,
@@ -246,41 +258,33 @@ class TaskRunner:
             return task.status
 
     def get_run_status(self, token: str):
-        task_name, run_id = token.split(':', maxsplit=1)
+        task_name, run_id = token.split(":", maxsplit=1)
 
         if task := self.tasks.get(task_name):
-            return task.get_run_status(
-                int(run_id)
-            )
+            return task.get_run_status(int(run_id))
 
     async def complete(self, token: str):
-        task_name, run_id = token.split(':', maxsplit=1)
+        task_name, run_id = token.split(":", maxsplit=1)
 
         if task := self.tasks.get(task_name):
-            return await task.complete(
-                int(run_id)
-            )
+            return await task.complete(int(run_id))
 
     async def cancel(self, token: str):
-        task_name, run_id = token.split(':', maxsplit=1)
+        task_name, run_id = token.split(":", maxsplit=1)
 
         task = self.tasks.get(task_name)
         if task:
-            await task.cancel(
-                int(run_id)
-            )
+            await task.cancel(int(run_id))
 
     async def cancel_schedule(
         self,
         token: str,
     ):
-        task_name, run_id = token.split(':', maxsplit=1)
+        task_name, run_id = token.split(":", maxsplit=1)
 
         task = self.tasks.get(task_name)
         if task:
-            await task.cancel_schedule(
-                int(run_id)
-            )
+            await task.cancel_schedule(int(run_id))
 
     async def shutdown(self):
         for task in self.tasks.values():
@@ -291,7 +295,7 @@ class TaskRunner:
         try:
             self._cleanup_task.cancel()
             await asyncio.sleep(0)
-        
+
         except Exception:
             pass
 
