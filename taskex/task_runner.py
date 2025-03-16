@@ -235,7 +235,7 @@ class TaskRunner:
             RunStatus.CANCELLED,
         ]:
             await asyncio.sleep(self._cleanup_interval)
-            update = await self.tasks[task_name].get_run_update(token)
+            update = await self.tasks[task_name].get_run_update(run_id)
 
         return await self.tasks[task_name].complete(run_id)
 
