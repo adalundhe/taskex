@@ -92,6 +92,7 @@ class Run:
         self._loop = asyncio.get_event_loop()
         self._executor = executor
         self._semaphore = semaphore
+        self._return_code: int | None = None
 
     def to_dict(self):
         return {"run_id": self.run_id, "task_name": self.task_name}
@@ -134,8 +135,11 @@ class Run:
 
     @property
     def return_code(self):
+        if self._process and self._return_code is None:
+            self._return_code = self._process.returncode
+
         if self._process:
-            return self._process.returncode
+            return self._return_code
 
     async def get_stdout(self):
         buffer = bytearray()
@@ -198,12 +202,18 @@ class Run:
 
     @property
     def task_running(self):
+        if self._process and self._return_code is None:
+            self._return_code = self._process.returncode
+
         if self._process:
-            return self._process.returncode is None
+            return self._return_code is None
 
         return self._task and not self._task.done() and not self._task.cancelled()
 
     async def get_run_update(self):
+        if self._process and self._return_code is None:
+            self._return_code = self._process.returncode
+
         if self._process:
             stderr = await self.get_stderr()
             stdout = await self.get_stdout()
@@ -215,7 +225,7 @@ class Run:
                 command=self.call,
                 args=self._args,
                 status=self.status,
-                return_code=self._process.returncode,
+                return_code=self._return_code,
                 env=self._env,
                 working_directory=self._working_directory,
                 command_type=self._command_type,
@@ -366,6 +376,9 @@ class Run:
             error = f"Err. - Task Run - {self.run_id} - timed out. Exceeded deadline of - {self.timeout} - seconds."
             self.status = RunStatus.FAILED
 
+            if self._return_code is None:
+                self._return_code = self._process.returncode
+
             update = ShellProcess(
                 run_id=self.run_id,
                 task_name=self.task_name,
@@ -373,7 +386,7 @@ class Run:
                 command=self.call,
                 args=self._args,
                 status=self.status,
-                return_code=self._process.returncode,
+                return_code=self._return_code,
                 env=self._env,
                 working_directory=self._working_directory,
                 command_type=self._command_type,
@@ -387,6 +400,9 @@ class Run:
             self.trace = traceback.format_exc()
             self.status = RunStatus.FAILED
 
+            if self._return_code is None:
+                self._return_code = self._process.returncode
+
             update = ShellProcess(
                 run_id=self.run_id,
                 task_name=self.task_name,
@@ -394,7 +410,7 @@ class Run:
                 command=self.call,
                 args=self._args,
                 status=self.status,
-                return_code=self._process.returncode,
+                return_code=self._return_code,
                 env=self._env,
                 working_directory=self._working_directory,
                 command_type=self._command_type,
@@ -443,11 +459,18 @@ class Run:
 
     async def _poll_for_shell_complete(self, poll_interval: int | float):
         result = await self.get_run_update()
-        while self._process.returncode is None:
+
+        if self._return_code is None:
+            self._return_code = self._process.returncode
+
+        while self._return_code is None:
             await asyncio.sleep(poll_interval)
             result = await self.get_run_update()
 
             self.elapsed = time.monotonic() - self.start
+
+            if self._return_code is None:
+                self._return_code = self._process.returncode
 
         return result
 
