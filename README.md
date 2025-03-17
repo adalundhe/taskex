@@ -12,4 +12,4 @@
 | Version     | 0.2.10                                                          |
 | Download    | https://pypi.org/project/taskex/                                | 
 | Source      | https://github.com/adalundhe/taskex                             |
-| Keywords    | performance, testing, async, distributed, graph, DAG, workflow  |
+| Keywords    | async, tasks, runner, shell, jobs                               |
