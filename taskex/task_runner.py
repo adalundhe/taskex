@@ -286,6 +286,10 @@ class TaskRunner:
         if task:
             await task.cancel_schedule(int(run_id))
 
+    async def clear(self):
+        for task in self.tasks.values():
+            await task.shutdown()
+
     async def shutdown(self):
         for task in self.tasks.values():
             await task.shutdown()
