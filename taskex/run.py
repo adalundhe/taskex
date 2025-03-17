@@ -43,6 +43,7 @@ class Run:
         "_loop",
         "_executor",
         "_semaphore",
+        "_return_code",
         "task_name",
     )
 
