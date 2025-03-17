@@ -207,13 +207,6 @@ class Run:
         return self._task and not self._task.done() and not self._task.cancelled()
 
     async def get_run_update(self):
-        await self._return_code_read_lock.acquire()
-        if self._process and self._return_code is None:
-            self._return_code = self._process.returncode
-
-        if self._return_code_read_lock.locked():
-            self._return_code_read_lock.release()
-
         if self._process:
             stderr = await self.get_stderr()
             stdout = await self.get_stdout()
@@ -225,7 +218,6 @@ class Run:
                 command=self.call,
                 args=self._args,
                 status=self.status,
-                return_code=self._return_code,
                 env=self._env,
                 working_directory=self._working_directory,
                 command_type=self._command_type,
@@ -362,35 +354,39 @@ class Run:
 
         self.status = RunStatus.RUNNING
 
+        stderr: str | None = (None,)
+        stdout: str | None = None
+
         try:
             if timeout:
-                update = await asyncio.wait_for(
-                    self._poll_for_shell_complete(poll_interval),
+                self._return_code = await asyncio.wait_for(
+                    self._process.wait(),
                     timeout=timeout,
                 )
 
+                stderr = await self.get_stderr()
+                stdout = await self.get_stdout()
+
             else:
-                update = await self._poll_for_shell_complete(poll_interval)
+                self._return_code = await self._process.wait()
+
+                stderr = await self.get_stderr()
+                stdout = await self.get_stdout()
 
         except asyncio.TimeoutError:
             error = f"Err. - Task Run - {self.run_id} - timed out. Exceeded deadline of - {self.timeout} - seconds."
             self.status = RunStatus.FAILED
 
-            await self._return_code_read_lock.acquire()
-            if self._return_code is None:
-                self._return_code = self._process.returncode
+            stderr = await self.get_stderr()
+            stdout = await self.get_stdout()
 
-            if self._return_code_read_lock.locked():
-                self._return_code_read_lock.release()
-
-            update = ShellProcess(
+            return ShellProcess(
                 run_id=self.run_id,
                 task_name=self.task_name,
                 process_id=self._process.pid,
                 command=self.call,
                 args=self._args,
                 status=self.status,
-                return_code=self._return_code,
                 env=self._env,
                 working_directory=self._working_directory,
                 command_type=self._command_type,
@@ -404,21 +400,13 @@ class Run:
             self.trace = traceback.format_exc()
             self.status = RunStatus.FAILED
 
-            await self._return_code_read_lock.acquire()
-            if self._return_code is None:
-                self._return_code = self._process.returncode
-
-            if self._return_code_read_lock.locked():
-                self._return_code_read_lock.release()
-
-            update = ShellProcess(
+            return ShellProcess(
                 run_id=self.run_id,
                 task_name=self.task_name,
                 process_id=self._process.pid,
                 command=self.call,
                 args=self._args,
                 status=self.status,
-                return_code=self._return_code,
                 env=self._env,
                 working_directory=self._working_directory,
                 command_type=self._command_type,
@@ -427,68 +415,33 @@ class Run:
                 elapsed=self.start - time.monotonic(),
             )
 
-        error_message = ""
-        try:
-            error_message = update.error
-
-        except Exception:
-            error_message = "Unknown exception - failed to decode stderr output"
-
-        self.error = error_message
+        self.result = stdout
+        if stderr:
+            self.error = stderr
 
         if self.return_code != 0:
-            self.error = f"Err. - Task Run - {self.run_id} - failed. Encountered exception - {error_message}."
+            self.error = f"Err. - Task Run - {self.run_id} - failed. Encountered exception - {stderr}."
             self.status = RunStatus.FAILED
 
         else:
             self.status = RunStatus.COMPLETE
-        try:
-            self.result = update.result.decode()
-
-        except Exception:
-            pass
 
         return ShellProcess(
             run_id=self.run_id,
             task_name=self.task_name,
-            process_id=update.process_id,
+            process_id=self._process.pid,
             command=self.call,
             args=self._args,
             status=self.status,
-            return_code=update.return_code,
+            return_code=self._return_code,
             env=self._env,
             working_directory=self._working_directory,
             command_type=self._command_type,
-            error=update.error,
-            result=update.result,
+            error=self.error,
+            result=self.result,
             trace=self.trace,
             elapsed=self.start - time.monotonic(),
         )
-
-    async def _poll_for_shell_complete(self, poll_interval: int | float):
-        result = await self.get_run_update()
-
-        await self._return_code_read_lock.acquire()
-        if self._return_code is None:
-            self._return_code = self._process.returncode
-
-        if self._return_code_read_lock.locked():
-            self._return_code_read_lock.release()
-
-        while self._return_code is None:
-            await asyncio.sleep(poll_interval)
-            result = await self.get_run_update()
-
-            self.elapsed = time.monotonic() - self.start
-
-            await self._return_code_read_lock.acquire()
-            if self._return_code is None:
-                self._return_code = self._process.returncode
-
-            if self._return_code_read_lock.locked():
-                self._return_code_read_lock.release()
-
-        return result
 
     async def _execute(self, *args, **kwargs):
         try:
