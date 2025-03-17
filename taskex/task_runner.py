@@ -245,13 +245,13 @@ class TaskRunner:
             int(run_id),
         )
 
-    def stop(
+    def stop_schedules(
         self,
         task_name: str,
     ):
         task = self.tasks.get(task_name)
         if task:
-            task.stop()
+            task.stop_schedules()
 
     def get_task_status(self, task_name: str):
         if task := self.tasks.get(task_name):
@@ -286,7 +286,7 @@ class TaskRunner:
         if task:
             await task.cancel_schedule(int(run_id))
 
-    async def clear(self):
+    async def stop(self):
         for task in self.tasks.values():
             await task.shutdown()
 

@@ -4,6 +4,7 @@ import time
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from typing import (
+    Any,
     Callable,
     Dict,
     Generic,
@@ -11,9 +12,7 @@ from typing import (
     Literal,
     Optional,
     TypeVar,
-    Any,
 )
-
 
 from .models import RunStatus, TaskType
 from .run import Run
@@ -25,7 +24,7 @@ T = TypeVar("T")
 
 class Task(Generic[T]):
     def __init__(
-        self, 
+        self,
         snowflake_generator: SnowflakeGenerator,
         name: str,
         task: Callable[[], T] | str,
@@ -33,14 +32,13 @@ class Task(Generic[T]):
         semaphore: asyncio.Semaphore,
         *args: tuple[Any, ...],
         schedule: str | None = None,
-        trigger: Literal["MANUAL", "ON_START"] = 'MANUAL',
-        repeat: Literal["NEVER", "ALWAYS"] | int = 'NEVER',
+        trigger: Literal["MANUAL", "ON_START"] = "MANUAL",
+        repeat: Literal["NEVER", "ALWAYS"] | int = "NEVER",
         timeout: int | float | str | None = None,
         keep: int | None = None,
         max_age: str | None = None,
-        keep_policy: Literal["COUNT", "AGE", "COUNT_AND_AGE"] = 'COUNT',
+        keep_policy: Literal["COUNT", "AGE", "COUNT_AND_AGE"] = "COUNT",
         task_type: TaskType = TaskType.CALLABLE,
-        
     ) -> None:
         self._snowflake_generator = snowflake_generator
         self.task_id = snowflake_generator.generate()
@@ -49,10 +47,9 @@ class Task(Generic[T]):
         self.trigger: Literal["MANUAL", "ON_START"] = trigger
         self.repeat: Literal["NEVER", "ALWAYS"] | int = repeat
 
-        self.schedule: int | float | None =  None
+        self.schedule: int | float | None = None
         if schedule:
             self.schedule = TimeParser(schedule).time
-
 
         self.timeout: int | float | None = None
         if isinstance(timeout, str):
@@ -87,7 +84,6 @@ class Task(Generic[T]):
             return run.status
 
         return RunStatus.IDLE
-    
 
     async def get_run_update(self, run_id: int):
         return await self._runs[run_id].get_run_update()
@@ -138,7 +134,6 @@ class Task(Generic[T]):
 
                 except Exception:
                     pass
-
 
     def abort(self):
         for run in self._runs.values():
@@ -199,7 +194,7 @@ class Task(Generic[T]):
         *args: tuple[Any, ...],
         env: Dict[str, str] | None = None,
         cwd: str | pathlib.Path | None = None,
-        shell: bool = False, 
+        shell: bool = False,
         run_id: Optional[str] = None,
         timeout: Optional[int | float] = None,
         poll_interval: int | float = 0.5,
@@ -260,8 +255,8 @@ class Task(Generic[T]):
         self._runs[run.run_id] = run
 
         return run
-    
-    def stop(self):
+
+    def stop_schedules(self):
         for run_id in self._schedule_running_statuses:
             self._schedule_running_statuses[run_id] = False
 
@@ -278,7 +273,10 @@ class Task(Generic[T]):
         if timeout is None:
             timeout = self.timeout
 
-        if self._schedules.get(run_id) is None and self._schedule_running_statuses[run_id] is False:
+        if (
+            self._schedules.get(run_id) is None
+            and self._schedule_running_statuses[run_id] is False
+        ):
             self._schedule_running_statuses[run_id] = True
             run = Run(
                 run_id,
@@ -297,13 +295,13 @@ class Task(Generic[T]):
             return run
 
         return self.latest()
-    
+
     def run_shell_schedule(
         self,
         *args: tuple[Any, ...],
         env: Dict[str, str] | None = None,
         cwd: str | pathlib.Path | None = None,
-        shell: bool = False, 
+        shell: bool = False,
         run_id: Optional[str] = None,
         timeout: Optional[int | float] = None,
         poll_interval: int | float = 0.5,
@@ -314,7 +312,10 @@ class Task(Generic[T]):
         if timeout is None:
             timeout = self.timeout
 
-        if self._schedules.get(run_id) is None and self._schedule_running_statuses[run_id] is False:
+        if (
+            self._schedules.get(run_id) is None
+            and self._schedule_running_statuses[run_id] is False
+        ):
             self._schedule_running_statuses[run_id] = True
             run = Run(
                 run_id,
@@ -381,14 +382,14 @@ class Task(Generic[T]):
 
                 self._runs[run.run_id] = run
                 self._schedule_running_statuses[run.run_id] = True
-    
+
     async def _run_shell_schedule(
         self,
         run: Run,
         *args: tuple[str, ...],
         env: Dict[str, str] | None = None,
         cwd: str | pathlib.Path | None = None,
-        shell: bool = False, 
+        shell: bool = False,
         poll_interval: int | float = 0.5,
     ):
         self._runs[run.run_id] = run
