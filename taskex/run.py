@@ -44,6 +44,7 @@ class Run:
         "_executor",
         "_semaphore",
         "_return_code",
+        "_return_code_read_lock",
         "task_name",
     )
 
@@ -94,6 +95,7 @@ class Run:
         self._executor = executor
         self._semaphore = semaphore
         self._return_code: int | None = None
+        self._return_code_read_lock = asyncio.Lock()
 
     def to_dict(self):
         return {"run_id": self.run_id, "task_name": self.task_name}
@@ -136,11 +138,7 @@ class Run:
 
     @property
     def return_code(self):
-        if self._process and self._return_code is None:
-            self._return_code = self._process.returncode
-
-        if self._process:
-            return self._return_code
+        return self._return_code
 
     async def get_stdout(self):
         buffer = bytearray()
@@ -203,17 +201,18 @@ class Run:
 
     @property
     def task_running(self):
-        if self._process and self._return_code is None:
-            self._return_code = self._process.returncode
-
         if self._process:
             return self._return_code is None
 
         return self._task and not self._task.done() and not self._task.cancelled()
 
     async def get_run_update(self):
+        await self._return_code_read_lock.acquire()
         if self._process and self._return_code is None:
             self._return_code = self._process.returncode
+
+        if self._return_code_read_lock.locked():
+            self._return_code_read_lock.release()
 
         if self._process:
             stderr = await self.get_stderr()
@@ -377,8 +376,12 @@ class Run:
             error = f"Err. - Task Run - {self.run_id} - timed out. Exceeded deadline of - {self.timeout} - seconds."
             self.status = RunStatus.FAILED
 
+            await self._return_code_read_lock.acquire()
             if self._return_code is None:
                 self._return_code = self._process.returncode
+
+            if self._return_code_read_lock.locked():
+                self._return_code_read_lock.release()
 
             update = ShellProcess(
                 run_id=self.run_id,
@@ -401,8 +404,12 @@ class Run:
             self.trace = traceback.format_exc()
             self.status = RunStatus.FAILED
 
+            await self._return_code_read_lock.acquire()
             if self._return_code is None:
                 self._return_code = self._process.returncode
+
+            if self._return_code_read_lock.locked():
+                self._return_code_read_lock.release()
 
             update = ShellProcess(
                 run_id=self.run_id,
@@ -461,8 +468,12 @@ class Run:
     async def _poll_for_shell_complete(self, poll_interval: int | float):
         result = await self.get_run_update()
 
+        await self._return_code_read_lock.acquire()
         if self._return_code is None:
             self._return_code = self._process.returncode
+
+        if self._return_code_read_lock.locked():
+            self._return_code_read_lock.release()
 
         while self._return_code is None:
             await asyncio.sleep(poll_interval)
@@ -470,8 +481,12 @@ class Run:
 
             self.elapsed = time.monotonic() - self.start
 
+            await self._return_code_read_lock.acquire()
             if self._return_code is None:
                 self._return_code = self._process.returncode
+
+            if self._return_code_read_lock.locked():
+                self._return_code_read_lock.release()
 
         return result
 
