@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import shlex
 import signal
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
@@ -86,10 +87,22 @@ class TaskRunner:
 
     def create_task_id(self):
         return self._snowflake_generator.generate()
+    
+    def bundle(
+        self,
+        call: Callable[..., Awaitable[T]],
+        *args: tuple[Any, ...],
+        **kwargs: dict[str, Any],
+    ):
+        return functools.partial(
+            call,
+            *args,
+            **kwargs,
+        )
 
     def run(
         self,
-        call: Callable[..., Awaitable[Any]],
+        call: Callable[..., Awaitable[T]],
         *args,
         alias: str | None = None,
         run_id: int | None = None,
