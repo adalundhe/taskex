@@ -24,10 +24,12 @@ T = TypeVar("T")
 
 def shutdown_executor(
     sig: int,
-    executor: ThreadPoolExecutor | ProcessPoolExecutor,
+    executor: ThreadPoolExecutor | ProcessPoolExecutor | None,
     default_handler: Callable[..., Any],
 ):
-    executor.shutdown(cancel_futures=True)
+    if executor:
+        executor.shutdown(cancel_futures=True)
+
     signal.signal(sig, default_handler)
 
 
@@ -50,12 +52,13 @@ class TaskRunner:
         self._run_cleanup: bool = False
         self._snowflake_generator = SnowflakeGenerator(instance_id)
 
+        self._executor: ThreadPoolExecutor | ProcessPoolExecutor | None = None
         if config.MERCURY_SYNC_EXECUTOR_TYPE == "thread":
             self._executor = ThreadPoolExecutor(
                 max_workers=config.MERCURY_SYNC_TASK_RUNNER_MAX_THREADS
             )
 
-        else:
+        elif config.MERCURY_SYNC_EXECUTOR_TYPE == 'process':
             self._executor = ProcessPoolExecutor(
                 max_workers=config.MERCURY_SYNC_TASK_RUNNER_MAX_THREADS
             )
@@ -318,12 +321,13 @@ class TaskRunner:
 
         except Exception:
             pass
+        
+        if self._executor:
+            try:
+                self._executor.shutdown(cancel_futures=True)
 
-        try:
-            self._executor.shutdown(cancel_futures=True)
-
-        except Exception:
-            pass
+            except Exception:
+                pass
 
     def abort(self):
         for task in self.tasks.values():
@@ -336,12 +340,13 @@ class TaskRunner:
 
         except Exception:
             pass
+        
+        if self._executor:
+            try:
+                self._executor.shutdown(cancel_futures=True)
 
-        try:
-            self._executor.shutdown(cancel_futures=True)
-
-        except Exception:
-            pass
+            except Exception:
+                pass
 
     async def _cleanup(self):
         while self._run_cleanup:

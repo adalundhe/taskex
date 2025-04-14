@@ -54,7 +54,7 @@ class Run:
         task_name: str,
         call: Callable[..., Awaitable[Any]] | str,
         task_type: TaskType,
-        executor: ProcessPoolExecutor | ThreadPoolExecutor,
+        executor: ProcessPoolExecutor | ThreadPoolExecutor | None,
         semaphore: asyncio.Semaphore,
         timeout: Optional[int] = None,
     ) -> None:
@@ -488,7 +488,12 @@ class Run:
                 await self._semaphore.acquire()
                 self.result = await asyncio.wait_for(
                     self._loop.run_in_executor(
-                        self._executor, functools.partial(self.call, *args, **kwargs)
+                        self._executor, 
+                        functools.partial(
+                            self.call, 
+                            *args, 
+                            **kwargs,
+                        ),
                     )
                 )
 
@@ -497,7 +502,12 @@ class Run:
             else:
                 await self._semaphore.acquire()
                 self.result = await self._loop.run_in_executor(
-                    self._executor, functools.partial(self.call, *args, **kwargs)
+                    self._executor, 
+                    functools.partial(
+                        self.call, 
+                        *args, 
+                        **kwargs,
+                    ),
                 )
 
                 self._semaphore.release()

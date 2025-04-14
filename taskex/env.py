@@ -7,7 +7,7 @@ PrimaryType = Union[str, int, float, bytes, bool]
 
 
 class Env(BaseModel):
-    MERCURY_SYNC_EXECUTOR_TYPE: Literal["thread", "process"] = "process"
+    MERCURY_SYNC_EXECUTOR_TYPE: Literal["thread", "process", "none"] = "process"
     MERCURY_SYNC_LOG_LEVEL: StrictStr = "info"
     MERCURY_SYNC_CLEANUP_INTERVAL: StrictStr = "1s"
     MERCURY_SYNC_TASK_RUNNER_MAX_THREADS: StrictInt = os.cpu_count()

@@ -28,7 +28,7 @@ class Task(Generic[T]):
         snowflake_generator: SnowflakeGenerator,
         name: str,
         task: Callable[[], T] | str,
-        executor: ProcessPoolExecutor | ThreadPoolExecutor,
+        executor: ProcessPoolExecutor | ThreadPoolExecutor | None,
         semaphore: asyncio.Semaphore,
         *args: tuple[Any, ...],
         schedule: str | None = None,
