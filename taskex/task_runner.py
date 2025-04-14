@@ -122,7 +122,10 @@ class TaskRunner:
             self.start_cleanup()
 
         command_name = alias
-        if command_name is None:
+        if command_name is None and isinstance(call, functools.partial):
+            command_name = call.func.__name__
+
+        elif command_name is None:
             command_name = call.__name__
 
         task = self.tasks.get(command_name)

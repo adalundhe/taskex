@@ -81,8 +81,31 @@ class Run:
         self._working_directory: str | None = None
         self._read_lock = asyncio.Lock()
 
-        if not isinstance(self.call, str) and hasattr(call, "__self__"):
+        if not isinstance(
+            self.call,
+            str,
+        ) and not isinstance(
+            call,
+            functools.partial,
+        ) and hasattr(
+            call, 
+            "__self__",
+        ):
             bound_instance = call.__self__
+            self.call = self.call.__get__(bound_instance, self.call.__class__)
+            setattr(bound_instance, self.call.__name__, self.call)
+
+        elif not isinstance(
+            self.call,
+            str,
+        ) and isinstance(
+            call,
+            functools.partial,
+        ) and hasattr(
+            call.func, 
+            "__self__",
+        ):
+            bound_instance = call.func.__self__
             self.call = self.call.__get__(bound_instance, self.call.__class__)
             setattr(bound_instance, self.call.__name__, self.call)
 
