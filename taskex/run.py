@@ -107,7 +107,7 @@ class Run:
         ):
             bound_instance = call.func.__self__
             self.call = self.call.__get__(bound_instance, self.call.__class__)
-            setattr(bound_instance, bound_instance.__name__, self.call)
+            setattr(bound_instance, call.func.__name__, self.call)
 
         self._task: Optional[asyncio.Task] = None
         self._process: Process | None = None
