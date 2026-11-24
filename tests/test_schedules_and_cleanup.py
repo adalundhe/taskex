@@ -216,3 +216,86 @@ async def test_shutdown_cancels_schedule_even_after_initial_run_evicted() -> Non
 
     assert ticks == ticks_after_shutdown
     assert len(task._schedules) == 0
+
+
+@pytest.mark.asyncio
+async def test_count_cleanup_does_not_cancel_live_runs() -> None:
+    async def slow_job(idx: int) -> int:
+        await asyncio.sleep(0.20)
+        return idx
+
+    async with TaskRunner(
+        config=Env(
+            MERCURY_SYNC_EXECUTOR_TYPE="none",
+            MERCURY_SYNC_CLEANUP_INTERVAL="40ms",
+        )
+    ) as runner:
+        # 25 concurrent live runs exceeding default keep=10 across multiple cleanup sweeps
+        runs = [runner.run(slow_job, i, alias="burst_25") for i in range(25)]
+        results = await runner.wait_all([r.token for r in runs])
+
+        assert len(results) == 25
+        assert all(res.status == RunStatus.COMPLETE for res in results)
+        assert [res.result for res in results] == list(range(25))
+
+        # After completion, cleanup trims finished history to default keep=10
+        await asyncio.sleep(0.08)
+        task = runner.tasks["burst_25"]
+        assert len(task._runs) == 10
+        assert sorted(task._runs.keys()) == [r.run_id for r in runs[-10:]]
+
+
+@pytest.mark.asyncio
+async def test_age_cleanup_does_not_cancel_live_or_paused_runs() -> None:
+    started = asyncio.Event()
+
+    async def slow_age_job() -> str:
+        started.set()
+        await asyncio.sleep(0.16)
+        return "finished"
+
+    async def pauseable_job() -> str:
+        from taskex import pause_point
+
+        await pause_point()
+        return "resumed-ok"
+
+    async with TaskRunner(
+        config=Env(
+            MERCURY_SYNC_EXECUTOR_TYPE="none",
+            MERCURY_SYNC_CLEANUP_INTERVAL="30ms",
+        )
+    ) as runner:
+        r_live = runner.run(
+            slow_age_job,
+            alias="age_live",
+            max_age="50ms",
+            keep_policy="AGE",
+        )
+        r_paused = runner.run(
+            pauseable_job,
+            alias="age_paused",
+            max_age="50ms",
+            keep_policy="AGE",
+        )
+        assert await runner.pause(r_paused.token) is True
+
+        # Wait longer than max_age (50ms) and multiple cleanup sweeps while live/paused
+        await started.wait()
+        await asyncio.sleep(0.11)
+        assert r_live.run_id in runner.tasks["age_live"]._runs
+        assert r_paused.run_id in runner.tasks["age_paused"]._runs
+        assert r_paused.status == RunStatus.PAUSED
+
+        await runner.resume(r_paused.token)
+        res_live, res_paused = await runner.wait_all([r_live.token, r_paused.token])
+        assert res_live.status == RunStatus.COMPLETE
+        assert res_live.result == "finished"
+        assert res_paused.status == RunStatus.COMPLETE
+        assert res_paused.result == "resumed-ok"
+
+        # Once terminal and older than max_age, both are evicted cleanly
+        await asyncio.sleep(0.10)
+        assert len(runner.tasks["age_live"]._runs) == 0
+        assert len(runner.tasks["age_paused"]._runs) == 0
+

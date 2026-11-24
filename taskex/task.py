@@ -9,7 +9,6 @@ from typing import (
     Callable,
     Dict,
     Generic,
-    List,
     Literal,
     Optional,
     TypeVar,
@@ -413,40 +412,27 @@ class Task(Generic[T]):
         if self.keep is None:
             return
 
-        removed_runs: List[Run] = []
-        if len(self._runs) > self.keep:
-            run_ids = sorted(self._runs)
-            excess = len(run_ids) - self.keep
-            for run_id in run_ids[:excess]:
-                removed_runs.append(self._runs.pop(run_id))
-
-        active_removed = [
-            run for run in removed_runs if run.status not in TERMINAL_STATUSES
-        ]
-        if active_removed:
-            await asyncio.gather(
-                *(run.cancel() for run in active_removed),
-                return_exceptions=True,
-            )
+        terminal_run_ids = sorted(
+            run_id
+            for run_id, run in list(self._runs.items())
+            if run.status in TERMINAL_STATUSES
+        )
+        if len(terminal_run_ids) > self.keep:
+            excess = len(terminal_run_ids) - self.keep
+            for run_id in terminal_run_ids[:excess]:
+                self._runs.pop(run_id, None)
 
     async def _execute_age_policy(self) -> None:
         if self.max_age is None:
             return
 
-        removed_runs: List[Run] = []
         current_time = time.monotonic()
         for run_id, run in list(self._runs.items()):
-            if current_time - run.start > self.max_age:
-                removed_runs.append(self._runs.pop(run_id))
-
-        active_removed = [
-            run for run in removed_runs if run.status not in TERMINAL_STATUSES
-        ]
-        if active_removed:
-            await asyncio.gather(
-                *(run.cancel() for run in active_removed),
-                return_exceptions=True,
-            )
+            if run.status not in TERMINAL_STATUSES:
+                continue
+            finished_at = run.end if run.end else run.start
+            if current_time - finished_at > self.max_age:
+                self._runs.pop(run_id, None)
 
     def _create_run(
         self,

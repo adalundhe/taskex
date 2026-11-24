@@ -96,8 +96,8 @@ Configure per-task retention using `keep`, `max_age`, and `keep_policy`:
 
 | `keep_policy` | Behavior |
 | --- | --- |
-| `"COUNT"` (default) | Keeps the `keep` most recent runs (defaults to `10` if `keep` is omitted) and evicts older runs. |
-| `"AGE"` | Evicts runs whose age (`time.monotonic() - run.start`) exceeds `max_age`. |
+| `"COUNT"` (default) | Keeps the `keep` most recent finished runs (defaults to `10` if `keep` is omitted) and evicts older finished runs. |
+| `"AGE"` | Evicts finished runs whose age since completion (`time.monotonic() - run.end`) exceeds `max_age`. |
 | `"COUNT_AND_AGE"` | Applies `"AGE"` eviction first, then `"COUNT"` eviction. |
 
 ```python
@@ -112,6 +112,5 @@ run = runner.run(
 
 Eviction behavior:
 
-- Completed, failed, or already-cancelled runs are removed from the task's run dictionary without mutating their terminal status.
-- Any evicted run that is still actively running is cancelled and reaped cleanly.
-- If a caller is already awaiting `runner.wait(token)` when a run is evicted, `wait()` completes cleanly without raising `KeyError`.
+- Retention cleanup **only evicts finished (terminal) runs** (`COMPLETE`, `FAILED`, `CANCELLED`). Live (`CREATED`, `PENDING`, `RUNNING`) and `PAUSED` runs are never evicted or cancelled by `COUNT` or `AGE` sweeps — use `timeout` to bound execution duration.
+- Evicted runs are removed from the task's in-memory run history without mutating their terminal status or deleting persisted checkpoints.
