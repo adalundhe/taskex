@@ -15,6 +15,7 @@
 | `MERCURY_SYNC_CONTEXT_POLL_RATE` | `StrictStr` | `"0.1s"` | — | Context poll interval setting. |
 | `MERCURY_SYNC_SHUTDOWN_POLL_RATE` | `StrictStr` | `"0.1s"` | — | Shutdown poll interval setting. |
 | `MERCURY_SYNC_DUPLICATE_JOB_POLICY` | `Literal["reject", "replace"]` | `"replace"` | — | Duplicate job policy setting. |
+| `MERCURY_SYNC_CHECKPOINT_DB_PATH` | `Optional[StrictStr]` | `None` | — | Optional SQLite file path for durable runner-managed checkpoints (`SQLiteCheckpointStore`). |
 
 `Env.types_map()` returns a mapping of environment variable names to their parser callables (`str` or `int`).
 

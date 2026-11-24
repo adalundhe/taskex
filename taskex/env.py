@@ -1,5 +1,5 @@
 import os
-from typing import Callable, Dict, Literal, Union
+from typing import Callable, Dict, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, StrictInt, StrictStr
 
@@ -19,6 +19,7 @@ class Env(BaseModel):
     MERCURY_SYNC_CONTEXT_POLL_RATE: StrictStr = "0.1s"
     MERCURY_SYNC_SHUTDOWN_POLL_RATE: StrictStr = "0.1s"
     MERCURY_SYNC_DUPLICATE_JOB_POLICY: Literal["reject", "replace"] = "replace"
+    MERCURY_SYNC_CHECKPOINT_DB_PATH: Optional[StrictStr] = None
 
     @classmethod
     def types_map(cls) -> Dict[str, Callable[[str], PrimaryType]]:
@@ -32,4 +33,5 @@ class Env(BaseModel):
             "MERCURY_SYNC_CONTEXT_POLL_RATE": str,
             "MERCURY_SYNC_SHUTDOWN_POLL_RATE": str,
             "MERCURY_SYNC_DUPLICATE_JOB_POLICY": str,
+            "MERCURY_SYNC_CHECKPOINT_DB_PATH": str,
         }

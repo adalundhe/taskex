@@ -1,6 +1,7 @@
 import asyncio
 import concurrent.futures
 import functools
+import inspect
 import pathlib
 import shlex
 import signal
@@ -17,9 +18,14 @@ from typing import (
     TypeVar,
 )
 
+from .checkpoint import (
+    CheckpointStore,
+    MemoryCheckpointStore,
+    SQLiteCheckpointStore,
+)
 from .env import Env
-from .models import RunStatus, ShellProcess, TaskRun, TaskType
-from .run import Run
+from .models import Checkpoint, RunStatus, ShellProcess, TaskRun, TaskType
+from .run import Run, _maybe_await
 from .snowflake import SnowflakeGenerator
 from .task import Task
 from .util.time_parser import TimeParser
@@ -100,7 +106,9 @@ def _handle_loop_signal(
             runner._executor = None
 
     saved = _SAVED_SIGNAL_HANDLERS.get(loop)
-    prev_handler = saved.pop(sig, signal.SIG_DFL) if saved is not None else signal.SIG_DFL
+    prev_handler = (
+        saved.pop(sig, signal.SIG_DFL) if saved is not None else signal.SIG_DFL
+    )
 
     try:
         loop.remove_signal_handler(sig)
@@ -120,6 +128,7 @@ class TaskRunner:
         self,
         instance_id: int | None = None,
         config: Env | None = None,
+        checkpoint_store: CheckpointStore | None = None,
     ) -> None:
         if instance_id is None:
             instance_id = 0
@@ -135,6 +144,18 @@ class TaskRunner:
         self._cleanup_task: Optional[asyncio.Task[Any]] = None
         self._run_cleanup: bool = False
         self._snowflake_generator = SnowflakeGenerator(instance_id)
+
+        if checkpoint_store is not None:
+            self._checkpoint_store: CheckpointStore = checkpoint_store
+            self._owns_checkpoint_store = False
+        elif config.MERCURY_SYNC_CHECKPOINT_DB_PATH is not None:
+            self._checkpoint_store = SQLiteCheckpointStore(
+                config.MERCURY_SYNC_CHECKPOINT_DB_PATH
+            )
+            self._owns_checkpoint_store = True
+        else:
+            self._checkpoint_store = MemoryCheckpointStore()
+            self._owns_checkpoint_store = True
 
         self._executor: ThreadPoolExecutor | ProcessPoolExecutor | None = None
         if config.MERCURY_SYNC_EXECUTOR_TYPE == "thread":
@@ -162,6 +183,10 @@ class TaskRunner:
 
         if loop is not None:
             self._register_signal_handlers(loop)
+
+    @property
+    def checkpoint_store(self) -> CheckpointStore:
+        return self._checkpoint_store
 
     async def __aenter__(self) -> "TaskRunner":
         self._ensure_loop_setup()
@@ -240,6 +265,32 @@ class TaskRunner:
         except ValueError as err:
             raise ValueError(f"Invalid run token: {token!r}") from err
 
+    def _resolve_checkpoint_sync(
+        self,
+        resume_from: str | Checkpoint | None,
+    ) -> Checkpoint | None:
+        if resume_from is None:
+            return None
+
+        if isinstance(resume_from, Checkpoint):
+            return resume_from
+
+        if ":" in resume_from:
+            task_name, run_id = self._parse_token(resume_from)
+            result = self._checkpoint_store.get_latest(task_name, run_id)
+        else:
+            result = self._checkpoint_store.get_latest_for_task(resume_from)
+
+        if inspect.isawaitable(result):
+            if inspect.iscoroutine(result):
+                result.close()
+            raise TypeError(
+                "Use 'await runner.resume(...)' or pass a loaded Checkpoint "
+                "object when using an async CheckpointStore."
+            )
+
+        return result
+
     def all_tasks(self) -> Iterator[Task[Any]]:
         for task in list(self.tasks.values()):
             yield task
@@ -281,6 +332,7 @@ class TaskRunner:
         keep: int | None = None,
         max_age: str | int | float | None = None,
         keep_policy: Literal["COUNT", "AGE", "COUNT_AND_AGE"] = "COUNT",
+        resume_from: str | Checkpoint | None = None,
         **kwargs: Any,
     ) -> Run:
         if self._is_shutdown:
@@ -295,6 +347,8 @@ class TaskRunner:
             raise ValueError(
                 "A 'schedule' interval must be provided when 'repeat' is not 'NEVER'."
             )
+
+        initial_checkpoint = self._resolve_checkpoint_sync(resume_from)
 
         if self._cleanup_task is None or self._cleanup_task.done():
             self.start_cleanup()
@@ -317,6 +371,7 @@ class TaskRunner:
                 max_age=max_age,
                 keep_policy=keep_policy,
                 active_executor_futures=self._active_executor_futures,
+                checkpoint_store=self._checkpoint_store,
             )
             self.tasks[command_name] = task
         elif task is not None and call is not None:
@@ -331,6 +386,7 @@ class TaskRunner:
                 **kwargs,
                 run_id=run_id,
                 timeout=timeout,
+                initial_checkpoint=initial_checkpoint,
             )
 
         if task.schedule is not None:
@@ -339,6 +395,7 @@ class TaskRunner:
                 **kwargs,
                 run_id=run_id,
                 timeout=timeout,
+                initial_checkpoint=initial_checkpoint,
             )
             assert scheduled_run is not None
             return scheduled_run
@@ -363,6 +420,7 @@ class TaskRunner:
         keep: int | None = None,
         max_age: str | int | float | None = None,
         keep_policy: Literal["COUNT", "AGE", "COUNT_AND_AGE"] = "COUNT",
+        resume_from: str | Checkpoint | None = None,
     ) -> Run:
         if self._is_shutdown:
             raise RuntimeError(
@@ -376,6 +434,8 @@ class TaskRunner:
             raise ValueError(
                 "A 'schedule' interval must be provided when 'repeat' is not 'NEVER'."
             )
+
+        initial_checkpoint = self._resolve_checkpoint_sync(resume_from)
 
         if self._cleanup_task is None or self._cleanup_task.done():
             self.start_cleanup()
@@ -403,6 +463,7 @@ class TaskRunner:
                 keep_policy=keep_policy,
                 task_type=TaskType.SHELL,
                 active_executor_futures=self._active_executor_futures,
+                checkpoint_store=self._checkpoint_store,
             )
             self.tasks[command_name] = task
         else:
@@ -417,6 +478,7 @@ class TaskRunner:
                 run_id=run_id,
                 timeout=timeout,
                 poll_interval=self._cleanup_interval,
+                initial_checkpoint=initial_checkpoint,
             )
 
         if task.schedule is not None:
@@ -428,6 +490,7 @@ class TaskRunner:
                 run_id=run_id,
                 timeout=timeout,
                 poll_interval=self._cleanup_interval,
+                initial_checkpoint=initial_checkpoint,
             )
             assert scheduled_run is not None
             return scheduled_run
@@ -435,6 +498,179 @@ class TaskRunner:
         raise ValueError(
             "A 'schedule' interval must be provided when 'repeat' is not 'NEVER'."
         )
+
+    async def checkpoint(
+        self,
+        token: str,
+        state: Any,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> Checkpoint:
+        task_name, run_id = self._parse_token(token)
+        return await self.tasks[task_name].checkpoint(
+            run_id,
+            state,
+            metadata=metadata,
+        )
+
+    async def get_checkpoint(self, token: str) -> Checkpoint | None:
+        task_name, run_id = self._parse_token(token)
+        if task := self.tasks.get(task_name):
+            return await task.get_checkpoint(run_id)
+        return await _maybe_await(
+            self._checkpoint_store.get_latest(task_name, run_id)
+        )
+
+    async def get_latest_task_checkpoint(
+        self,
+        task_name: str,
+    ) -> Checkpoint | None:
+        return await _maybe_await(
+            self._checkpoint_store.get_latest_for_task(task_name)
+        )
+
+    async def list_checkpoints(self, token: str) -> list[Checkpoint]:
+        task_name, run_id = self._parse_token(token)
+        if task := self.tasks.get(task_name):
+            return await task.list_checkpoints(run_id)
+        return await _maybe_await(
+            self._checkpoint_store.list_checkpoints(task_name, run_id)
+        )
+
+    async def clear_checkpoints(self, token: str) -> None:
+        task_name, run_id = self._parse_token(token)
+        if task := self.tasks.get(task_name):
+            await task.clear_checkpoints(run_id)
+        else:
+            await _maybe_await(
+                self._checkpoint_store.delete(task_name, run_id)
+            )
+
+    async def pause(self, token: str) -> bool:
+        task_name, run_id = self._parse_token(token)
+        task = self.tasks.get(task_name)
+        if task is None:
+            return False
+        return await task.pause(run_id)
+
+    async def resume(
+        self,
+        token: str,
+        *args: Any,
+        call: Callable[..., Any] | str | None = None,
+        env: dict[str, Any] | None = None,
+        cwd: str | pathlib.Path | None = None,
+        shell: bool | None = None,
+        timeout: str | int | float | None = None,
+        **kwargs: Any,
+    ) -> Run:
+        if self._is_shutdown:
+            raise RuntimeError(
+                "Cannot resume tasks after TaskRunner has been shut down."
+            )
+
+        if isinstance(timeout, str):
+            timeout = TimeParser(timeout).time
+
+        if ":" in token and token not in self.tasks:
+            task_name, run_id = self._parse_token(token)
+            task = self.tasks.get(task_name)
+            if task is not None:
+                existing = task._runs.get(run_id)
+                if (
+                    existing is not None
+                    and existing.paused
+                    and existing.task_running
+                ):
+                    await existing.resume()
+                    return existing
+
+                if self._cleanup_task is None or self._cleanup_task.done():
+                    self.start_cleanup()
+
+                return await task.resume(
+                    run_id,
+                    *args,
+                    call=call,
+                    env=env,
+                    cwd=cwd,
+                    shell=shell,
+                    timeout=timeout,
+                    poll_interval=self._cleanup_interval,
+                    **kwargs,
+                )
+
+            # Cross-runner recovery: task not yet registered in this runner
+            cp = await _maybe_await(
+                self._checkpoint_store.get_latest(task_name, run_id)
+            )
+        else:
+            task_name = token
+            cp = await _maybe_await(
+                self._checkpoint_store.get_latest_for_task(task_name)
+            )
+
+        if call is None:
+            task = self.tasks.get(task_name)
+            if task is None:
+                raise KeyError(
+                    f"Task {task_name!r} is not registered in this TaskRunner; "
+                    "provide 'call=' to resume from persisted checkpoints."
+                )
+            if task.task_type == TaskType.SHELL:
+                return self.command(
+                    str(task.call),
+                    *args,
+                    alias=task_name,
+                    env=env,
+                    cwd=cwd,
+                    shell=bool(shell) if shell is not None else False,
+                    timeout=timeout,
+                    resume_from=cp,
+                )
+            return self.run(
+                task.call,
+                *args,
+                alias=task_name,
+                timeout=timeout,
+                resume_from=cp,
+                **kwargs,
+            )
+
+        if isinstance(call, str):
+            return self.command(
+                call,
+                *args,
+                alias=task_name,
+                env=env,
+                cwd=cwd,
+                shell=bool(shell) if shell is not None else False,
+                timeout=timeout,
+                resume_from=cp,
+            )
+
+        return self.run(
+            call,
+            *args,
+            alias=task_name,
+            timeout=timeout,
+            resume_from=cp,
+            **kwargs,
+        )
+
+    async def pause_schedule(self, token: str) -> bool:
+        task_name, run_id = self._parse_token(token)
+        task = self.tasks.get(task_name)
+        if task is None:
+            return False
+        return await task.pause_schedule(run_id)
+
+    async def resume_schedule(self, token: str) -> bool:
+        task_name, run_id = self._parse_token(token)
+        task = self.tasks.get(task_name)
+        if task is None:
+            return False
+        return await task.resume_schedule(run_id)
 
     async def wait_all(self, tokens: list[str]) -> list[ShellProcess | TaskRun]:
         return list(
@@ -536,6 +772,12 @@ class TaskRunner:
             except Exception:
                 pass
 
+        if self._owns_checkpoint_store:
+            try:
+                await _maybe_await(self._checkpoint_store.close())
+            except Exception:
+                pass
+
     def abort(self) -> None:
         self._is_shutdown = True
         self._run_cleanup = False
@@ -556,6 +798,14 @@ class TaskRunner:
             self._executor = None
             try:
                 executor.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
+
+        if self._owns_checkpoint_store:
+            try:
+                res = self._checkpoint_store.close()
+                if inspect.iscoroutine(res):
+                    res.close()
             except Exception:
                 pass
 

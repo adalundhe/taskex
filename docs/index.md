@@ -8,8 +8,9 @@ TaskEx is a lightweight, pure Python library built on `asyncio` and `pydantic` f
 2. **[Running Async & Sync Tasks](running-tasks.md)** — Submitting coroutines, sync functions, bound methods, `bundle()`, waiting on results, and polling status updates.
 3. **[Running Shell Commands](shell-commands.md)** — Executing subprocesses with `shell=False` or `shell=True`, reading `stdout`/`stderr`, timeouts, and process-group cancellation.
 4. **[Scheduling, Durations & Cleanup Policies](scheduling-and-cleanup.md)** — `TimeParser` duration syntax, fixed and infinite schedules, stopping/cancelling schedules, and `COUNT`/`AGE` retention policies.
-5. **[Configuration, Executors & Snowflake IDs](configuration.md)** — Full `Env` reference, choosing an executor, signal handling, and `SnowflakeGenerator`.
-6. **[API Reference](api-reference.md)** — Complete method and model reference for all public classes.
+5. **[Checkpointing & Pause/Resume](checkpointing-and-pause.md)** — `ContextVar` checkpoint helpers, `MemoryCheckpointStore` & `SQLiteCheckpointStore`, cooperative & `SIGSTOP`/`SIGCONT` pause/resume, schedule suspension, and restart-from-checkpoint recovery.
+6. **[Configuration, Executors & Snowflake IDs](configuration.md)** — Full `Env` reference, choosing an executor, signal handling, and `SnowflakeGenerator`.
+7. **[API Reference](api-reference.md)** — Complete method and model reference for all public classes.
 
 ---
 

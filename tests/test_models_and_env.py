@@ -47,6 +47,7 @@ def test_shell_process_allows_none_process_id() -> None:
         (RunStatus.PENDING, False),
         (RunStatus.IDLE, False),
         (RunStatus.RUNNING, False),
+        (RunStatus.PAUSED, False),
         (RunStatus.COMPLETE, True),
         (RunStatus.FAILED, True),
         (RunStatus.CANCELLED, True),

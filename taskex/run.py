@@ -1,24 +1,30 @@
 import asyncio
 import concurrent.futures
+import contextvars
 import functools
 import inspect
 import json
 import os
 import pathlib
 import signal
+import threading
 import time
 import traceback
 from asyncio.subprocess import Process
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from typing import Any, Awaitable, Callable, Dict, Optional
 
+from .checkpoint import CheckpointStore
+from .context import _CURRENT_RUN_CONTEXT, RunContext
 from .models import (
+    Checkpoint,
     CommandType,
     RunStatus,
     ShellProcess,
     TaskRun,
     TaskType,
 )
+from .snowflake import SnowflakeGenerator
 
 TERMINAL_STATUSES = frozenset(
     {
@@ -44,6 +50,12 @@ def _is_coroutine_callable(obj: Any) -> bool:
     return inspect.iscoroutinefunction(call_attr)
 
 
+async def _maybe_await(value: Any) -> Any:
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
 class Run:
     __slots__ = (
         "run_id",
@@ -58,23 +70,40 @@ class Run:
         "call",
         "result",
         "task_type",
+        "resumed_from_checkpoint_id",
         "_task",
         "_process",
         "_args",
         "_env",
         "_working_directory",
+        "_shell",
+        "_poll_interval",
+        "_call_args",
+        "_call_kwargs",
         "_command_type",
         "_buffer_size",
         "_stdout_buffer",
         "_stderr_buffer",
         "_reader_tasks",
         "_done_event",
+        "_resume_event",
+        "_pause_event",
+        "_sync_resume_event",
+        "_paused_at",
+        "_paused_duration",
+        "_cancel_requested",
+        "_loop",
         "_executor",
         "_semaphore",
         "_return_code",
         "_started_new_session",
         "_cancel_grace_period",
         "_active_executor_futures",
+        "_checkpoint_store",
+        "_snowflake_generator",
+        "_latest_checkpoint",
+        "_checkpoint_sequence",
+        "_checkpoint_lock",
     )
 
     def __init__(
@@ -87,6 +116,9 @@ class Run:
         semaphore: asyncio.Semaphore,
         timeout: Optional[int | float] = None,
         active_executor_futures: set[concurrent.futures.Future[Any]] | None = None,
+        checkpoint_store: CheckpointStore | None = None,
+        snowflake_generator: SnowflakeGenerator | None = None,
+        initial_checkpoint: Checkpoint | None = None,
     ) -> None:
         self.run_id = run_id
         self.task_name = task_name
@@ -95,6 +127,10 @@ class Run:
         self._args: tuple[str, ...] | None = None
         self._env: dict[str, Any] | None = None
         self._working_directory: str | None = None
+        self._shell: bool = False
+        self._poll_interval: int | float = 0.5
+        self._call_args: tuple[Any, ...] = ()
+        self._call_kwargs: dict[str, Any] = {}
 
         self.error: Optional[str] = None
         self.trace: Optional[str] = None
@@ -106,6 +142,11 @@ class Run:
         self.call = call
         self.task_type = task_type
         self.result: Any | None = None
+        self.resumed_from_checkpoint_id: int | None = (
+            initial_checkpoint.checkpoint_id
+            if initial_checkpoint is not None
+            else None
+        )
 
         self._task: Optional[asyncio.Task[Any]] = None
         self._process: Process | None = None
@@ -115,12 +156,29 @@ class Run:
         self._stderr_buffer = bytearray()
         self._reader_tasks: list[asyncio.Task[Any]] = []
         self._done_event = asyncio.Event()
+
+        self._resume_event = asyncio.Event()
+        self._resume_event.set()
+        self._pause_event = asyncio.Event()
+        self._sync_resume_event = threading.Event()
+        self._sync_resume_event.set()
+        self._paused_at: float | None = None
+        self._paused_duration: float = 0.0
+        self._cancel_requested: bool = False
+        self._loop: asyncio.AbstractEventLoop | None = None
+
         self._executor = executor
         self._semaphore = semaphore
         self._return_code: int | None = None
         self._started_new_session = False
         self._cancel_grace_period = 2.0
         self._active_executor_futures = active_executor_futures
+
+        self._checkpoint_store = checkpoint_store
+        self._snowflake_generator = snowflake_generator
+        self._latest_checkpoint: Checkpoint | None = initial_checkpoint
+        self._checkpoint_sequence: int = 0
+        self._checkpoint_lock = threading.Lock()
 
     def to_dict(self) -> dict[str, Any]:
         return {"run_id": self.run_id, "task_name": self.task_name}
@@ -135,6 +193,10 @@ class Run:
     @property
     def running(self) -> bool:
         return self.status == RunStatus.RUNNING
+
+    @property
+    def paused(self) -> bool:
+        return self.status == RunStatus.PAUSED
 
     @property
     def cancelled(self) -> bool:
@@ -165,6 +227,16 @@ class Run:
     @property
     def return_code(self) -> int | None:
         return self._return_code
+
+    @property
+    def paused_duration(self) -> float:
+        if self._paused_at is not None:
+            return self._paused_duration + (time.monotonic() - self._paused_at)
+        return self._paused_duration
+
+    @property
+    def latest_checkpoint(self) -> Checkpoint | None:
+        return self._latest_checkpoint
 
     def _decoded_stdout(self) -> str:
         return bytes(self._stdout_buffer).decode("utf-8", errors="replace")
@@ -215,6 +287,8 @@ class Run:
             start=self.start,
             end=self.end if self.end else None,
             elapsed=self._current_elapsed(),
+            paused_duration=self.paused_duration,
+            checkpoint=self._latest_checkpoint,
         )
 
     def _build_task_run(self) -> TaskRun:
@@ -227,7 +301,9 @@ class Run:
             start=self.start,
             end=self.end if self.end else None,
             elapsed=self._current_elapsed(),
+            paused_duration=self.paused_duration,
             result=self.result,
+            checkpoint=self._latest_checkpoint,
         )
 
     def _build_result(self) -> ShellProcess | TaskRun:
@@ -242,6 +318,7 @@ class Run:
         self.status = status
         self.elapsed = time.monotonic() - self.start
         if status in TERMINAL_STATUSES:
+            self._finalize_pause_accounting()
             self.end = time.monotonic()
             self.elapsed = self.end - self.start
             self._done_event.set()
@@ -266,6 +343,154 @@ class Run:
 
         return self._build_result()
 
+    def _next_checkpoint(
+        self,
+        state: Any,
+        metadata: dict[str, Any] | None = None,
+    ) -> Checkpoint:
+        with self._checkpoint_lock:
+            self._checkpoint_sequence += 1
+            sequence = self._checkpoint_sequence
+            if self._snowflake_generator is not None:
+                checkpoint_id = self._snowflake_generator.generate()
+            else:
+                checkpoint_id = time.time_ns()
+
+        return Checkpoint(
+            checkpoint_id=checkpoint_id,
+            run_id=self.run_id,
+            task_name=self.task_name,
+            sequence=sequence,
+            state=state,
+            metadata=dict(metadata) if metadata is not None else {},
+            status=self.status,
+        )
+
+    async def checkpoint(
+        self,
+        state: Any,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> Checkpoint:
+        cp = self._next_checkpoint(state, metadata=metadata)
+        if self._checkpoint_store is not None:
+            await _maybe_await(self._checkpoint_store.save(cp))
+        self._latest_checkpoint = cp
+        return cp
+
+    def checkpoint_sync(
+        self,
+        state: Any,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> Checkpoint:
+        cp = self._next_checkpoint(state, metadata=metadata)
+        if self._checkpoint_store is not None:
+            res = self._checkpoint_store.save(cp)
+            if inspect.isawaitable(res):
+                if self._loop is None or self._loop.is_closed():
+                    if inspect.iscoroutine(res):
+                        res.close()
+                    raise RuntimeError(
+                        "Cannot bridge async CheckpointStore without an active event loop."
+                    )
+                asyncio.run_coroutine_threadsafe(res, self._loop).result()
+        self._latest_checkpoint = cp
+        return cp
+
+    async def get_checkpoint(self) -> Checkpoint | None:
+        if self._checkpoint_store is not None:
+            stored = await _maybe_await(
+                self._checkpoint_store.get_latest(self.task_name, self.run_id)
+            )
+            if stored is not None:
+                return stored
+        return self._latest_checkpoint
+
+    async def list_checkpoints(self) -> list[Checkpoint]:
+        if self._checkpoint_store is not None:
+            return await _maybe_await(
+                self._checkpoint_store.list_checkpoints(
+                    self.task_name,
+                    self.run_id,
+                )
+            )
+        if self._latest_checkpoint is not None:
+            return [self._latest_checkpoint]
+        return []
+
+    def _finalize_pause_accounting(self) -> None:
+        if self._paused_at is not None:
+            self._paused_duration += time.monotonic() - self._paused_at
+            self._paused_at = None
+        self._pause_event.clear()
+        self._resume_event.set()
+        self._sync_resume_event.set()
+
+    async def pause(self) -> bool:
+        if self.status in TERMINAL_STATUSES:
+            return False
+
+        if self.status == RunStatus.PAUSED:
+            return True
+
+        self._paused_at = time.monotonic()
+        self._resume_event.clear()
+        self._sync_resume_event.clear()
+        self._pause_event.set()
+        self.status = RunStatus.PAUSED
+
+        if (
+            self.task_type == TaskType.SHELL
+            and self._process is not None
+            and self._process.returncode is None
+        ):
+            self._stop_process()
+
+        return True
+
+    async def resume(self) -> bool:
+        if self.status != RunStatus.PAUSED:
+            return False
+
+        if self._paused_at is not None:
+            self._paused_duration += time.monotonic() - self._paused_at
+            self._paused_at = None
+
+        self.status = (
+            RunStatus.RUNNING if self._task is not None else RunStatus.CREATED
+        )
+        self._pause_event.clear()
+        self._resume_event.set()
+        self._sync_resume_event.set()
+
+        if (
+            self.task_type == TaskType.SHELL
+            and self._process is not None
+            and self._process.returncode is None
+        ):
+            self._continue_process()
+
+        return True
+
+    async def pause_point(self) -> None:
+        if self._cancel_requested:
+            raise asyncio.CancelledError
+
+        while not self._resume_event.is_set():
+            await self._resume_event.wait()
+            if self._cancel_requested:
+                raise asyncio.CancelledError
+
+    def pause_point_sync(self) -> None:
+        if self._cancel_requested:
+            raise asyncio.CancelledError
+
+        while not self._sync_resume_event.is_set():
+            self._sync_resume_event.wait()
+            if self._cancel_requested:
+                raise asyncio.CancelledError
+
     def _signal_process(self, sig: int) -> None:
         proc = self._process
         if proc is None or proc.returncode is not None:
@@ -283,13 +508,29 @@ class Run:
         try:
             if sig == getattr(signal, "SIGKILL", signal.SIGTERM):
                 proc.kill()
-            else:
+            elif sig == signal.SIGTERM:
                 proc.terminate()
+            else:
+                proc.send_signal(sig)
         except ProcessLookupError:
             pass
 
+    def _stop_process(self) -> None:
+        sigstop = getattr(signal, "SIGSTOP", None)
+        if sigstop is not None:
+            self._signal_process(sigstop)
+
+    def _continue_process(self) -> None:
+        sigcont = getattr(signal, "SIGCONT", None)
+        if sigcont is not None:
+            self._signal_process(sigcont)
+
     def _terminate_process(self) -> None:
+        was_paused = self.status == RunStatus.PAUSED or self._paused_at is not None
         self._signal_process(signal.SIGTERM)
+        if was_paused:
+            # A SIGSTOP-paused POSIX process will not handle SIGTERM until resumed.
+            self._continue_process()
 
     def _kill_process(self) -> None:
         self._signal_process(getattr(signal, "SIGKILL", signal.SIGTERM))
@@ -351,8 +592,18 @@ class Run:
             self._done_event.set()
             return
 
+        self._cancel_requested = True
+        was_paused = self.status == RunStatus.PAUSED or self._paused_at is not None
+
         if self._task is not None and not self._task.done():
-            self._terminate_process()
+            if self._process is not None and self._process.returncode is None:
+                self._terminate_process()
+            elif was_paused:
+                self._continue_process()
+
+            # Unblock any thread blocked in pause_point_sync()
+            self._finalize_pause_accounting()
+
             self._task.cancel()
             try:
                 await self._task
@@ -360,6 +611,8 @@ class Run:
                 pass
             except Exception:
                 pass
+        else:
+            self._finalize_pause_accounting()
 
         await self._reap_process()
         await self._finish_readers(wait_timeout=0.5)
@@ -377,6 +630,8 @@ class Run:
             self._done_event.set()
             return
 
+        self._cancel_requested = True
+        self._finalize_pause_accounting()
         self._kill_process()
 
         for reader in self._reader_tasks:
@@ -408,7 +663,10 @@ class Run:
         if self._task is not None and not self._task.done():
             raise RuntimeError(f"Run {self.run_id} is already executing.")
 
+        self._call_args = args
+        self._call_kwargs = dict(kwargs)
         loop = asyncio.get_running_loop()
+        self._loop = loop
         self._task = loop.create_task(self._execute(*args, **kwargs))
         self._task.add_done_callback(self._on_task_done)
 
@@ -427,6 +685,8 @@ class Run:
         str_args = tuple(str(arg) for arg in args)
         self._args = str_args
         self._env = env
+        self._shell = shell
+        self._poll_interval = poll_interval
 
         if cwd is not None:
             self._working_directory = str(cwd)
@@ -435,6 +695,7 @@ class Run:
             self.timeout = timeout
 
         loop = asyncio.get_running_loop()
+        self._loop = loop
         self._task = loop.create_task(
             self._execute_shell(
                 *str_args,
@@ -446,6 +707,84 @@ class Run:
             )
         )
         self._task.add_done_callback(self._on_task_done)
+
+    async def _await_with_pause_aware_timeout(
+        self,
+        target: asyncio.Future[Any],
+        timeout: float,
+    ) -> Any:
+        remaining = float(timeout)
+        loop = asyncio.get_running_loop()
+
+        try:
+            while True:
+                if self._pause_event.is_set():
+                    resume_waiter = loop.create_task(self._resume_event.wait())
+                    try:
+                        done, _ = await asyncio.wait(
+                            {target, resume_waiter},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                    finally:
+                        if not resume_waiter.done():
+                            resume_waiter.cancel()
+                            try:
+                                await resume_waiter
+                            except asyncio.CancelledError:
+                                pass
+
+                    if target in done:
+                        return target.result()
+                    continue
+
+                if remaining <= 0:
+                    if not target.done():
+                        target.cancel()
+                        try:
+                            await target
+                        except asyncio.CancelledError:
+                            pass
+                    raise asyncio.TimeoutError
+
+                started = time.monotonic()
+                pause_waiter = loop.create_task(self._pause_event.wait())
+                try:
+                    done, _ = await asyncio.wait(
+                        {target, pause_waiter},
+                        timeout=remaining,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                finally:
+                    if not pause_waiter.done():
+                        pause_waiter.cancel()
+                        try:
+                            await pause_waiter
+                        except asyncio.CancelledError:
+                            pass
+
+                if target in done:
+                    return target.result()
+
+                remaining -= time.monotonic() - started
+                if pause_waiter in done:
+                    continue
+
+                if not target.done():
+                    target.cancel()
+                    try:
+                        await target
+                    except asyncio.CancelledError:
+                        pass
+                raise asyncio.TimeoutError
+
+        except BaseException:
+            if not target.done():
+                target.cancel()
+                try:
+                    await target
+                except (asyncio.CancelledError, Exception):
+                    pass
+            raise
 
     async def _drain_stream(
         self,
@@ -480,8 +819,11 @@ class Run:
             pathlib.Path(cwd) if cwd is not None else None
         )
         start_new_session = os.name == "posix"
+        loop = asyncio.get_running_loop()
 
         try:
+            await self.pause_point()
+
             if shell:
                 command = [str(self.call), *args]
                 self._process = await asyncio.create_subprocess_shell(
@@ -504,9 +846,12 @@ class Run:
                 )
 
             self._started_new_session = start_new_session
-            self.status = RunStatus.RUNNING
+            if self._pause_event.is_set():
+                self.status = RunStatus.PAUSED
+                self._stop_process()
+            else:
+                self.status = RunStatus.RUNNING
 
-            loop = asyncio.get_running_loop()
             stdout_reader = loop.create_task(
                 self._drain_stream(self._process.stdout, self._stdout_buffer)
             )
@@ -522,14 +867,16 @@ class Run:
                 return rc
 
             if effective_timeout is not None:
-                self._return_code = await asyncio.wait_for(
-                    _wait_and_drain(),
-                    timeout=effective_timeout,
+                wait_task = loop.create_task(_wait_and_drain())
+                self._return_code = await self._await_with_pause_aware_timeout(
+                    wait_task,
+                    effective_timeout,
                 )
             else:
                 self._return_code = await _wait_and_drain()
 
         except asyncio.TimeoutError:
+            self._finalize_pause_accounting()
             await self._reap_process()
             await self._finish_readers(wait_timeout=0.5)
             self.result = self._decoded_stdout()
@@ -547,6 +894,7 @@ class Run:
                 await self._reap_process()
                 await self._finish_readers(wait_timeout=0.5)
             finally:
+                self._finalize_pause_accounting()
                 self.result = self._decoded_stdout()
                 self.end = time.monotonic()
                 self.elapsed = self.end - self.start
@@ -554,6 +902,7 @@ class Run:
             raise
 
         except Exception as err:
+            self._finalize_pause_accounting()
             await self._reap_process()
             await self._finish_readers(wait_timeout=0.5)
             self.result = self._decoded_stdout()
@@ -569,6 +918,7 @@ class Run:
         finally:
             self._reader_tasks.clear()
 
+        self._finalize_pause_accounting()
         stdout = self._decoded_stdout()
         stderr = self._decoded_stderr()
 
@@ -592,14 +942,17 @@ class Run:
 
     async def _execute(self, *args: Any, **kwargs: Any) -> TaskRun:
         loop = asyncio.get_running_loop()
+        ctx_token = _CURRENT_RUN_CONTEXT.set(RunContext(self))
         try:
+            await self.pause_point()
             self.status = RunStatus.RUNNING
 
             if inspect.isawaitable(self.call) and not callable(self.call):
                 if self.timeout is not None:
-                    self.result = await asyncio.wait_for(
-                        self.call,
-                        timeout=self.timeout,
+                    coro_task = loop.create_task(self.call)
+                    self.result = await self._await_with_pause_aware_timeout(
+                        coro_task,
+                        self.timeout,
                     )
                 else:
                     self.result = await self.call
@@ -607,9 +960,10 @@ class Run:
             elif _is_coroutine_callable(self.call):
                 coro = self.call(*args, **kwargs)
                 if self.timeout is not None:
-                    self.result = await asyncio.wait_for(
-                        coro,
-                        timeout=self.timeout,
+                    coro_task = loop.create_task(coro)
+                    self.result = await self._await_with_pause_aware_timeout(
+                        coro_task,
+                        self.timeout,
                     )
                 else:
                     self.result = await coro
@@ -621,8 +975,17 @@ class Run:
                         *args,
                         **kwargs,
                     )
+                    if isinstance(self._executor, ProcessPoolExecutor):
+                        submitted_call: Callable[[], Any] = bound_call
+                    else:
+                        thread_ctx = contextvars.copy_context()
+                        submitted_call = functools.partial(
+                            thread_ctx.run,
+                            bound_call,
+                        )
+
                     if self._executor is not None:
-                        cf_fut = self._executor.submit(bound_call)
+                        cf_fut = self._executor.submit(submitted_call)
                         if self._active_executor_futures is not None:
                             self._active_executor_futures.add(cf_fut)
                             cf_fut.add_done_callback(
@@ -633,21 +996,23 @@ class Run:
                             loop=loop,
                         )
                     else:
-                        fut = loop.run_in_executor(None, bound_call)
+                        fut = loop.run_in_executor(None, submitted_call)
 
                     if self.timeout is not None:
-                        self.result = await asyncio.wait_for(
+                        self.result = await self._await_with_pause_aware_timeout(
                             fut,
-                            timeout=self.timeout,
+                            self.timeout,
                         )
                     else:
                         self.result = await fut
 
+            self._finalize_pause_accounting()
             self.end = time.monotonic()
             self.elapsed = self.end - self.start
             self.status = RunStatus.COMPLETE
 
         except asyncio.TimeoutError:
+            self._finalize_pause_accounting()
             self.error = (
                 f"Err. - Task Run - {self.run_id} - timed out. "
                 f"Exceeded deadline of - {self.timeout} - seconds."
@@ -657,12 +1022,14 @@ class Run:
             self.status = RunStatus.FAILED
 
         except asyncio.CancelledError:
+            self._finalize_pause_accounting()
             self.end = time.monotonic()
             self.elapsed = self.end - self.start
             self.status = RunStatus.CANCELLED
             raise
 
         except Exception as e:
+            self._finalize_pause_accounting()
             self.error = (
                 f"Err. - Task Run - {self.run_id} - failed. "
                 f"Encountered exception - {str(e)}."
@@ -671,5 +1038,8 @@ class Run:
             self.end = time.monotonic()
             self.elapsed = self.end - self.start
             self.status = RunStatus.FAILED
+
+        finally:
+            _CURRENT_RUN_CONTEXT.reset(ctx_token)
 
         return self._build_task_run()

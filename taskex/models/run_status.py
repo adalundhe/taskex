@@ -7,17 +7,19 @@ class RunStatus(Enum):
     PENDING = "PENDING"
     IDLE = "IDLE"
     RUNNING = "RUNNING"
+    PAUSED = "PAUSED"
     COMPLETE = "COMPLETE"
     CANCELLED = "CANCELLED"
     FAILED = "FAILED"
 
 
 RunStatusName = Literal[
-    'CREATED',
-    'PENDING',
-    'IDLE',
-    'RUNNING',
-    'COMPLETE',
-    'CANCELLED',
-    'FAILED',
+    "CREATED",
+    "PENDING",
+    "IDLE",
+    "RUNNING",
+    "PAUSED",
+    "COMPLETE",
+    "CANCELLED",
+    "FAILED",
 ]

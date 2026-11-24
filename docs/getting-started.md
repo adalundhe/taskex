@@ -59,6 +59,7 @@ Every `Run` transitions through states defined in `RunStatus`:
 | `RunStatus.PENDING` | Queued awaiting a semaphore slot (used by `Task._run`). | No |
 | `RunStatus.IDLE` | Returned by `task.status` when a task has no runs yet. | No |
 | `RunStatus.RUNNING` | Callable or subprocess is actively executing. | No |
+| `RunStatus.PAUSED` | Suspended cooperatively (`pause_point`) or via POSIX `SIGSTOP` (`command`). | No |
 | `RunStatus.COMPLETE` | Finished successfully (return code `0` for shell commands). | Yes |
 | `RunStatus.FAILED` | Raised an exception, timed out, failed to spawn, or exited non-zero. | Yes |
 | `RunStatus.CANCELLED` | Cancelled via `cancel()`, `cancel_schedule()`, `stop()`, `shutdown()`, or `abort()`. | Yes |

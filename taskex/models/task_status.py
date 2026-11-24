@@ -6,6 +6,7 @@ class TaskStatus(Enum):
     PENDING = "PENDING"
     IDLE = "IDLE"
     RUNNING = "RUNNING"
+    PAUSED = "PAUSED"
     COMPLETE = "COMPLETE"
     CANCELLED = "CANCELLED"
     FAILED = "FAILED"
