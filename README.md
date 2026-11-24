@@ -8,7 +8,7 @@
 
 | Package | TaskEx |
 | --- | --- |
-| Version | 0.2.16 |
+| Version | 0.3.0 |
 | Python | >= 3.11 |
 | Dependencies | `pydantic` |
 | Download | https://pypi.org/project/taskex/ |
