@@ -5,7 +5,7 @@ from taskex import Env, TaskRunner
 
 
 async def async_task():
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     idx = 0
 
     start = time.monotonic()
@@ -15,7 +15,7 @@ async def async_task():
         idx += 1
         await asyncio.sleep(1)
 
-        loop.run_in_executor(
+        await loop.run_in_executor(
             None,
             print,
             str(idx),

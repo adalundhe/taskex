@@ -1,6 +1,7 @@
 from dataclasses import dataclass
-from datetime import datetime, tzinfo, timedelta
+from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Optional
+
 from .constants import MAX_INSTANCE, MAX_SEQ
 
 
@@ -30,7 +31,9 @@ class Snowflake:
 
     @property
     def datetime(self) -> datetime:
-        return datetime.utcfromtimestamp(self.seconds)
+        return datetime.fromtimestamp(self.seconds, tz=timezone.utc).replace(
+            tzinfo=None
+        )
 
     def datetime_tz(self, tz: Optional[tzinfo] = None) -> datetime:
         return datetime.fromtimestamp(self.seconds, tz=tz)

@@ -13,6 +13,11 @@ mcp = FastMCP("Example")
 runner = TaskRunner()
 
 
+def _read_context_bytes(file_path: str) -> bytes:
+    with open(file_path, "rb") as f:
+        return f.read()
+
+
 @mcp.tool()
 async def cancel_command(
     ctx: Context,
@@ -56,7 +61,7 @@ async def get_command_status(
         "What is the status of build test:1234567890?"
     """
 
-    ctx.info(f"Getting output of task {tracking_token}...")
+    await ctx.info(f"Getting output of task {tracking_token}...")
     response = await runner.get_task_update(tracking_token)
     return response.status.value
 
@@ -85,7 +90,7 @@ async def get_command_output(
         "Show me the output of my latest command"
         "Get the output of command test:1234567890 as JSON"
     """
-    ctx.info(f"Getting output of task {tracking_token}...")
+    await ctx.info(f"Getting output of task {tracking_token}...")
     response = await runner.get_task_update(tracking_token)
 
     if as_json and response.complete():
@@ -179,21 +184,23 @@ async def build(
 
     image_build_args: dict[str, Any] | None = None
     if build_args:
+        image_build_args = {}
         for arg in build_args.split(","):
             name, value = arg.split("=", maxsplit=1)
             image_build_args[name] = value
 
     use_custom_context = custom_context is not None
-    context: io.StringIO | io.BytesIO | None = None
+    context: io.BytesIO | None = None
     if custom_context:
-        run = runner.run(
-            open,
+        context_run = runner.run(
+            _read_context_bytes,
             custom_context,
-            "b",
             alias="load_custom_context",
         )
 
-        context: io.BytesIO = await runner.wait(run.token)
+        context_result = await runner.wait(context_run.token)
+        if context_result.result is not None:
+            context = io.BytesIO(context_result.result)
 
     run = runner.run(
         functools.partial(
